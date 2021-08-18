@@ -229,8 +229,8 @@ process Nfilter {
     output:
     set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
 	set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into varfilt_step2
-    set val(pairId), "${pairId}.out.RDS" into filt_step3  // needed for join() later
-	set val(pairId), "${pairId}.out.RDS" into varfilt_step3  // needed for join() later
+    set val(pairId), "${pairId}.out.RDS" into filt_step3Trimming // needed for join() later
+	set val(pairId), "${pairId}.out.RDS" into varfilt_step3Trimming // needed for join() later
 	file('forward_rc') into forwardP
     file('reverse_rc') into reverseP
 
@@ -299,7 +299,7 @@ if (params.lengthvar == false) {
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
-        set pairId, file(reads), file(trimming) from filt_step3.join(filt_step3)
+        set pairId, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
 
         output:
         set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
@@ -376,7 +376,7 @@ else if (params.lengthvar == true) {
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
-        set pairId, file(reads), file(trimming) from varfilt_step3.join(varfilt_step3)
+        set pairId, file(reads), file(trimming) from varfilt_step3.join(varfilt_step3Trimming)
 
         output:
         set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
