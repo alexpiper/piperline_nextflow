@@ -580,7 +580,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 		ddFs <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=pool)
 		ddRs <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=pool)
 
-		mergers <- mergePairs(ddFs, derepFs, ddRs, derepRs,
+		mergers <- mergePairs(ddFs, filtFs, ddRs, filtRs,
 			returnRejects = TRUE,
 			minOverlap = ${params.minOverlap},
 			maxMismatch = ${params.maxMismatch},
@@ -642,11 +642,14 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         errF <- readRDS("${errFor}")
         errR <- readRDS("${errRev}")
         cat("Processing:", "${pairId}", "\\n")
+		
+        filtFs <- "${filtFor}"
+        filtRs <- "${filtRev}"
 
-        ddF <- dada(derepF, err=errF, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
-        ddR <- dada(derepR, err=errR, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
+        ddF <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
+        ddR <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
 
-        merger <- mergePairs(ddF, derepF, ddR, derepR,
+        merger <- mergePairs(ddF, filtFs, ddR, filtRs,
             returnRejects = TRUE,
             minOverlap = ${params.minOverlap},
             maxMismatch = ${params.maxMismatch},
