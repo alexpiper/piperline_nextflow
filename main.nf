@@ -222,7 +222,7 @@ process runMultiQC {
  */
  
 /* non length variable amplicon filtering */
-else if (params.lengthvar == false){
+if (params.lengthvar == false){
     process filterAndTrim {
         tag { "nonvar_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
