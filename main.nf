@@ -273,7 +273,7 @@ process Nfilter {
  
 if (params.lengthvar == false) {
 	process cutadapt {
-		tag { "step2_${pairId}" }
+		tag { "filt_step2_${pairId}" }
 		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
 		input:
@@ -361,10 +361,10 @@ process FilterAndTrim {
 
     script:
     """
-    #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-    library(Biostrings); packageVersion("Biostrings")
+	#!/usr/bin/env Rscript
+	library(dada2); packageVersion("dada2")
+	library(ShortRead); packageVersion("ShortRead")
+	library(Biostrings); packageVersion("Biostrings")
 
     out1 <- readRDS("${trimming}")
     out2 <- filterAndTrim(fwd = paste0("${pairId}",".R1.cutadapt.fastq.gz"),

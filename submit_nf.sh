@@ -33,33 +33,17 @@ module load Java/12.0.1
 # Get reference sequences
 #wget https://zenodo.org/record/158955/files/gg_13_8_train_set_97.fa.gz?download=1 -O gg_13_8_train_set_97.fa.gz
 
-
-nextflow pull alexpiper/TADA
-nextflow run alexpiper/TADA --reads '*_R{1,2}_*.fastq.gz' --trimFor 24 --trimRev 25 --reference 'gg_13_8_train_set_97.fa.gz' -profile basc
-
-
-
-# Run IDTAXA 16s
-cd /group/pathogens/Alexp/Metabarcoding/test
-nextflow pull alexpiper/piperline
-nextflow run alexpiper/piperline --reads '*_R{1,2}_*.fastq.gz' --trimFor 24 --trimRev 25 --reference 'GTDB_r202-mod_April2021.RData' -profile basc -r main
-
-
 # Run RDP ITS
 
 # DAta from: https://www.ebi.ac.uk/ena/browser/view/PRJNA377530?show=reads
 cd /group/pathogens/Alexp/Metabarcoding/test/ITS
 nextflow pull alexpiper/piperline
-nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --amplicon 'ITS' \
+nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --lengthvar true \
 --fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \
 -profile basc -r main
 
+# Test with lenthvar false
 
 for d in ./*/ ; do
 (cd "$d" && mv *.fastq.gz ../. );
 done
-
-nextflow pull alexpiper/piperline
-nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --amplicon 'ITS' \
---fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \
--profile basc -r main -resume
