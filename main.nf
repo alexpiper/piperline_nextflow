@@ -575,7 +575,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 		cat("Processing all samples\n")
 
 		#Variable selection from CLI input flag --pool
-		pool <- ${params.pool}
+		pool <- "${params.pool}"
 		if(pool == "T" || pool == "TRUE"){
 		  pool <- as.logical(pool)
 		}
