@@ -59,9 +59,6 @@ for d in ./*/ ; do
 (cd "$d" && mv *.fastq.gz ../. );
 done
 
-
-
-cd /group/pathogens/Alexp/Metabarcoding/test/ITS
 nextflow pull alexpiper/piperline
 nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --amplicon 'ITS' \
 --fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \

@@ -12,16 +12,16 @@
 def helpMessage() {
     log.info"""
     ===================================
-     ${workflow.repository}/16S-rDNA-dada2-pipeline  ~  version ${params.version}
+     ${workflow.repository}/piperline  ~  version ${params.version}
     ===================================
     Usage:
 
     This pipeline can be run specifying parameters in a config file or with command line flags.
     The typical example for running the pipeline with command line flags is as follows:
-    nextflow run uct-cbio/16S-rDNA-dada2-pipeline --reads '*_R{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --reference 'gg_13_8_train_set_97.fa.gz' -profile uct_hex
+    nextflow run uct-cbio/piperline --reads '*_R{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --reference 'gg_13_8_train_set_97.fa.gz' -profile uct_hex
 
     The typical command for running the pipeline with your own config (instead of command line flags) is as follows:
-    nextflow run uct-cbio/16S-rDNA-dada2-pipeline -c dada2_user_input.config -profile uct_hex
+    nextflow run uct-cbio/piperline -c dada2_user_input.config -profile uct_hex
     where:
     dada2_user_input.config is the configuration file (see example 'dada2_user_input.config')
     NB: -profile uct_hex still needs to be specified from the command line
@@ -66,7 +66,7 @@ def helpMessage() {
                                     set to "md5" which will run MD5 on the sequence and generate a QIIME2-like unique hash.
 
     Help:
-      --help                        Will print out summary above when executing nextflow run uct-cbio/16S-rDNA-dada2-pipeline
+      --help                        Will print out summary above when executing nextflow run uct-cbio/piperline
 
     Merging arguments (optional):
       --minOverlap                  The minimum length of the overlap required for merging R1 and R2; default=20 (dada2 package default=12)
@@ -91,11 +91,11 @@ if (params.help){
 }
 
 //Validate inputs
-if ( params.trimFor == false && params.amplicon == '16S') {
+if ( params.trimFor == false && params.lengthvar == false) {
     exit 1, "Must set length of R1 (--trimFor) that needs to be trimmed (set 0 if no trimming is needed)"
 }
 
-if ( params.trimRev == false && params.amplicon == '16S') {
+if ( params.trimRev == false && params.lengthvar == false) {
     exit 1, "Must set length of R2 (--trimRev) that needs to be trimmed (set 0 if no trimming is needed)"
 }
 
@@ -103,16 +103,12 @@ if ( params.trimRev == false && params.amplicon == '16S') {
 //     exit 1, "Must set reference database using --reference"
 // }
 
-if (params.fwdprimer == false && params.amplicon == 'ITS'){
+if (params.fwdprimer == false && params.lengthvar == true){
     exit 1, "Must set forward primer using --fwdprimer"
 }
 
-if (params.revprimer == false && params.amplicon == 'ITS'){
+if (params.revprimer == false && params.lengthvar == true){
     exit 1, "Must set reverse primer using --revprimer"
-}
-
-if (params.aligner == 'infernal' && params.infernalCM == false){
-    exit 1, "Must set covariance model using --infernalCM when using Infernal"
 }
 
 if (!(['simple','md5'].contains(params.idType))) {
@@ -133,14 +129,14 @@ Channel
 
 // Header log info
 log.info "==================================="
-log.info " ${params.base}/16S-rDNA-dada2-pipeline  ~  version ${params.version}"
+log.info " ${params.base}/piperline  ~  version ${params.version}"
 log.info "==================================="
 def summary = [:]
 summary['Run Name']       = custom_runName ?: workflow.runName
 summary['Reads']          = params.reads
 summary['Forward primer'] = params.fwdprimer
 summary['Reverse primer'] = params.revprimer
-summary['Amplicon type']  = params.amplicon
+summary['Length variable']= params.lengthvar
 summary['trimFor']        = params.trimFor
 summary['trimRev']        = params.trimRev
 summary['truncFor']       = params.truncFor
@@ -219,22 +215,22 @@ process runMultiQC {
     """
 }
 
-/* ITS amplicon filtering */
+/* Length variable amplicon filtering */
 
 // Note: should explore cutadapt options more: https://github.com/benjjneb/dada2/issues/785
 // https://cutadapt.readthedocs.io/en/stable/guide.html#more-than-one
 
-if (params.amplicon == 'ITS') {
+if (params.lengthvar == true) {
 
-    process itsFilterAndTrimStep1 {
-        tag { "ITS_Step1_${pairId}" }
+    process Nfilter {
+        tag { "var_step1_${pairId}" }
 
         input:
         set pairId, file(reads) from dada2ReadPairs
 
         output:
-        set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into itsStep2
-        set val(pairId), "${pairId}.out.RDS" into itsStep3Trimming  // needed for join() later
+        set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into var_step2
+        set val(pairId), "${pairId}.out.RDS" into var_step3Trimming  // needed for join() later
         file('forward_rc') into forwardP
         file('reverse_rc') into reverseP
 
@@ -274,17 +270,17 @@ if (params.amplicon == 'ITS') {
         """
     }
     
-    process itsFilterAndTrimStep2 {
-        tag { "ITS_Step2_${pairId}" }
+    process cutadapt {
+        tag { "var_step2_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
-        set pairId, reads from itsStep2
+        set pairId, reads from var_step2
         file(forP) from forwardP
         file(revP) from reverseP
         
         output:
-        set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into itsStep3
+        set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into var_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
         when:
@@ -305,12 +301,12 @@ if (params.amplicon == 'ITS') {
         """
     }
 
-    process itsFilterAndTrimStep3 {
-        tag { "ITS_Step3_${pairId}" }
+    process varFilterAndTrim {
+        tag { "var_step3_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
-        set pairId, file(reads), file(trimming) from itsStep3.join(itsStep3Trimming)
+        set pairId, file(reads), file(trimming) from var_step3.join(var_step3Trimming)
 
         output:
         set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
@@ -351,10 +347,10 @@ if (params.amplicon == 'ITS') {
     }
     
 }
-/* 16S amplicon filtering */
-else if (params.amplicon == '16S'){
+/* non length variable amplicon filtering */
+else if (params.lengthvar == false){
     process filterAndTrim {
-        tag { "16s_${pairId}" }
+        tag { "nonvar_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
@@ -878,9 +874,6 @@ if (params.reference) {
             }
         }
     } else if (params.taxassignment == 'idtaxa') {
-        // Experimental!!! This assigns full taxonomy to species level, but only for
-        // some databases; unknown whether this works with concat sequences.  ITS
-        // doesn't seem to be currently supported
         process TaxonomyIDTAXA {
             tag { "TaxonomyIDTAXA" }
             publishDir "${params.outdir}/dada2-Chimera-Taxonomy", mode: "copy", overwrite: true
@@ -1172,7 +1165,7 @@ process GenerateTaxTables {
 // NOTE: 'when' directive doesn't work if channels have the same name in
 // two processes
 
-if (!params.precheck && params.runTree && params.amplicon != 'ITS') {
+if (!params.precheck && params.runTree && params.lengthvar == false) {
 
     if (params.aligner == 'DECIPHER') {
 
@@ -1375,9 +1368,9 @@ process ReadTracking {
  */
 workflow.onComplete {
 
-    def subject = "[${params.base}/16S-rDNA-dada2-pipeline] Successful: $workflow.runName"
+    def subject = "[${params.base}/piperline] Successful: $workflow.runName"
     if(!workflow.success){
-      subject = "[${params.base}/16S-rDNA-dada2-pipeline] FAILED: $workflow.runName"
+      subject = "[${params.base}/piperline] FAILED: $workflow.runName"
     }
     def email_fields = [:]
     email_fields['version'] = params.version
@@ -1423,11 +1416,11 @@ workflow.onComplete {
           if( params.plaintext_email ){ throw GroovyException('Send plaintext e-mail, not HTML') }
           // Try to send HTML e-mail using sendmail
           [ 'sendmail', '-t' ].execute() << sendmail_html
-          log.info "[${params.base}/16S-rDNA-dada2-pipeline] Sent summary e-mail to $params.email (sendmail)"
+          log.info "[${params.base}/piperline] Sent summary e-mail to $params.email (sendmail)"
         } catch (all) {
           // Catch failures and try with plaintext
           [ 'mail', '-s', subject, params.email ].execute() << email_txt
-          log.info "[${params.base}/16S-rDNA-dada2-pipeline] Sent summary e-mail to $params.email (mail)"
+          log.info "[${params.base}/piperline] Sent summary e-mail to $params.email (mail)"
         }
     }
 }
