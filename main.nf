@@ -562,35 +562,66 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         params.precheck == false
 
         script:
-        if (params.rescueUnmerged == true) {
         """
-        VariableLenMergePairs-Pooled.R --errFor ${errFor} \\
-            --errRev ${errRev} \\
-            --pool ${params.pool} \\
-            --cpus ${task.cpus} \\
-            --minOverlap ${params.minOverlap} \\
-            --maxMismatch ${params.maxMismatch} \\
-            --trimOverhang ${params.trimOverhang} \\
-            --justConcatenate ${params.justConcatenate} \\
-            --rescueUnmerged ${params.rescueUnmerged} \\
-            --minMergedLen ${params.minMergedLen} \\
-            --maxMergedLen ${params.maxMergedLen}
-        """
-        } else {  // This is the normal route
-        """
-        MergePairs-Pooled.R --errFor ${errFor} \\
-            --errRev ${errRev} \\
-            --pool ${params.pool} \\
-            --cpus ${task.cpus} \\
-            --minOverlap ${params.minOverlap} \\
-            --maxMismatch ${params.maxMismatch} \\
-            --trimOverhang ${params.trimOverhang} \\
-            --minMergedLen ${params.minMergedLen} \\
-            --maxMergedLen ${params.maxMergedLen} \\
-            --justConcatenate ${params.justConcatenate}
+		#!/usr/bin/env Rscript
+        library(dada2)
+        packageVersion("dada2")
+        setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
+		filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
+		filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
+
+        errF <- readRDS("${errFor}")
+        errR <- readRDS("${errRev}")
+		cat("Processing all samples\n")
+
+		#Variable selection from CLI input flag --pool
+		pool <- ${params.pool}
+		if(pool == "T" || pool == "TRUE"){
+		  pool <- as.logical(pool)
+		}
+
+		derepFs <- derepFastq(filtFs)
+
+		ddFs <- dada(derepFs, err=errF, multithread=${task.cpus}, pool=pool)
+
+		derepRs <- derepFastq(filtRs)
+
+		ddRs <- dada(derepRs, err=errR, multithread=${task.cpus}, pool=pool)
+
+		mergers <- mergePairs(ddFs, derepFs, ddRs, derepRs,
+			returnRejects = TRUE,
+			minOverlap = ${params.minOverlap},
+			maxMismatch = ${params.maxMismatch},
+			trimOverhang = as.logical("${params.trimOverhang}"),
+			justConcatenate = as.logical("${params.justConcatenate}")
+			)
+
+		# TODO: make this a single item list with ID as the name, this is lost
+		# further on
+		saveRDS(mergers, "all.mergers.RDS")
+
+		saveRDS(ddFs, "all.ddF.RDS")
+		saveRDS(derepFs, "all.derepFs.RDS")
+
+		saveRDS(ddRs, "all.ddR.RDS")
+		saveRDS(derepRs, "all.derepRs.RDS")
+
+		# go ahead and make seqtable
+		seqtab <- makeSequenceTable(mergers)
+
+		saveRDS(seqtab, "seqtab.original.RDS")
+
+		if (${params.minMergedLen} > 0) {
+		   seqtab <- seqtab[,nchar(colnames(seqtab)) >= ${params.minMergedLen}]
+		}
+
+		if (${params.maxMergedLen} > 0) {
+		   seqtab <- seqtab[,nchar(colnames(seqtab)) <= ${params.maxMergedLen}]
+		}
+
+		saveRDS(seqtab, "seqtab.RDS")
         """
         }
-    }
 } else {
     // pool = F, process per sample
     process PerSampleInferDerepAndMerge {

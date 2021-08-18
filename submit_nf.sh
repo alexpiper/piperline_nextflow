@@ -41,21 +41,20 @@ nextflow run alexpiper/TADA --reads '*_R{1,2}_*.fastq.gz' --trimFor 24 --trimRev
 
 # Run IDTAXA 16s
 cd /group/pathogens/Alexp/Metabarcoding/test
-nextflow pull alexpiper/TADA
-nextflow run alexpiper/TADA --reads '*_R{1,2}_*.fastq.gz' --trimFor 24 --trimRev 25 --reference 'GTDB_r202-mod_April2021.RData' -profile basc
+nextflow pull alexpiper/piperline
+nextflow run alexpiper/piperline --reads '*_R{1,2}_*.fastq.gz' --trimFor 24 --trimRev 25 --reference 'GTDB_r202-mod_April2021.RData' -profile basc -r main
 
 
 # Run RDP ITS
 
 # DAta from: https://www.ebi.ac.uk/ena/browser/view/PRJNA377530?show=reads
 cd /group/pathogens/Alexp/Metabarcoding/test/ITS
-nextflow pull alexpiper/TADA
-nextflow run alexpiper/TADA --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --amplicon 'ITS' --fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' -profile basc
+nextflow pull alexpiper/piperline
+nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --amplicon 'ITS' \
+--fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \
+-profile basc -r main
+
 
 for d in ./*/ ; do
 (cd "$d" && mv *.fastq.gz ../. );
 done
-
-
-FWD <- "ACCTGCGGARGGATCA"  ## CHANGE ME to your forward primer sequence
-REV <- "GAGATCCRTTGYTRAAAGTT"  ## CHANGE ME...
