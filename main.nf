@@ -554,8 +554,6 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         file "all.mergers.RDS" into mergerTracking
         file "all.ddF.RDS" into dadaForReadTracking
         file "all.ddR.RDS" into dadaRevReadTracking
-        file "all.derepFs.RDS" into dadaForDerep
-        file "all.derepRs.RDS" into dadaRevDerep
         file "seqtab.*"
 
         when:
@@ -579,14 +577,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 		if(pool == "T" || pool == "TRUE"){
 		  pool <- as.logical(pool)
 		}
-
-		derepFs <- derepFastq(filtFs)
-
-		ddFs <- dada(derepFs, err=errF, multithread=${task.cpus}, pool=pool)
-
-		derepRs <- derepFastq(filtRs)
-
-		ddRs <- dada(derepRs, err=errR, multithread=${task.cpus}, pool=pool)
+		ddFs <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=pool)
+		ddRs <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=pool)
 
 		mergers <- mergePairs(ddFs, derepFs, ddRs, derepRs,
 			returnRejects = TRUE,
@@ -601,10 +593,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 		saveRDS(mergers, "all.mergers.RDS")
 
 		saveRDS(ddFs, "all.ddF.RDS")
-		saveRDS(derepFs, "all.derepFs.RDS")
-
 		saveRDS(ddRs, "all.ddR.RDS")
-		saveRDS(derepRs, "all.derepRs.RDS")
 
 		# go ahead and make seqtable
 		seqtab <- makeSequenceTable(mergers)
@@ -638,8 +627,6 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         file "all.mergers.RDS" into mergerTracking
         file "all.ddF.RDS" into dadaForReadTracking
         file "all.ddR.RDS" into dadaRevReadTracking
-        file "all.derepF.RDS" into dadaForDerep
-        file "all.derepR.RDS" into dadaRevDerep
         file "seqtab.*"
 
         when:
@@ -656,11 +643,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         errR <- readRDS("${errRev}")
         cat("Processing:", "${pairId}", "\\n")
 
-        derepF <- derepFastq("${filtFor}")
-
         ddF <- dada(derepF, err=errF, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
-
-        derepR <- derepFastq("${filtRev}")
         ddR <- dada(derepR, err=errR, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
 
         merger <- mergePairs(ddF, derepF, ddR, derepR,
