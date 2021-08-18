@@ -1,15 +1,27 @@
-# Piperline - an automated DADA2 based workflow for pest and pathogen metabarcoding
-
-A dada2-based workflow using the Nextflow workflow manager.  The basic pipeline is currently implemented, including some basic read-tracking. 
+# Piperline - an automated DADA2 & NextFlow based pipeline for pest and pathogen metabarcoding
 
 This pipeline is adapted from https://github.com/HPCBio/dada2-Nextflow
 
 ## Prerequisites
 
-Nextflow (>=20.11.0), dada2 (>= 1.8), R (>= 3.2.0), Rcpp (>= 0.11.2), methods (>= 3.2.0), DECIPHER, phangorn, biomformat
+Software:
+Nextflow (>=20.11.0)
+R (>= 3.2.0)
+
+R packages:
+dada2 (>= 1.8), Rcpp (>= 0.11.2), methods (>= 3.2.0), DECIPHER, phangorn
 
 
-Before starting, i recommend learning about the individual componenets of the workflow:
+## Run on AgVic BASC Cluster:
+module load Nextflow/20.10.0
+
+nextflow pull alexpiper/piperline
+nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --lengthvar false \
+--fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \
+-profile basc -r main
+
+
+## Resources
 * [The indexing system we use](https://alexpiper.github.io/iMapPESTS/indexing.html)
 * [The DADA2 algorithm](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4927377/)
 * [The benefits of amplicon sequence variants over OTU's](https://www.nature.com/articles/ismej2017119)
@@ -18,5 +30,11 @@ Before starting, i recommend learning about the individual componenets of the wo
 
 ## Credits
 
-This pipeline was modified from the DADA2 pipeline Nextflow workflow developed by Chris Fields (https://github.com/HPCBio/dada2-Nextflow) fields
+Alexander Piper is the main developer of this pipeline
+
+This pipeline was modified from the 16s DADA2 Nextflow workflow developed by Chris Fields (https://github.com/HPCBio/dada2-Nextflow).
+
+## Licence
+
+This project is licensed under the MIT License - see the LICENSE.md file for details
 
