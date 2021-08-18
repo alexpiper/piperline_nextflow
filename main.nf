@@ -217,7 +217,7 @@ process runMultiQC {
 
 /*
  *
- * Step 2: Filter and trim (run per sample?)
+ * Step 2: Filter N bases
  *
  */
 process Nfilter {
@@ -228,9 +228,7 @@ process Nfilter {
 
     output:
     set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
-	set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into varfilt_step2
     set val(pairId), "${pairId}.out.RDS" into filt_step3Trimming // needed for join() later
-	set val(pairId), "${pairId}.out.RDS" into varfilt_step3Trimming // needed for join() later
 	file('forward_rc') into forwardP
     file('reverse_rc') into reverseP
 
@@ -267,7 +265,12 @@ process Nfilter {
     """
 }
 
-// filt
+/*
+ *
+ * Step 3: Remove primers with cutadapt
+ *
+ */
+ 
 if (params.lengthvar == false) {
 	process cutadapt {
 		tag { "step2_${pairId}" }
@@ -294,64 +297,20 @@ if (params.lengthvar == false) {
 			"${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
 		"""
 	}
-	process FilterAndTrim {
-        tag { "filt_step3_${pairId}" }
-        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
-
-        input:
-        set pairId, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
-
-        output:
-        set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
-        file "*.R1.filtered.fastq.gz" optional true into forReads
-        file "*.R2.filtered.fastq.gz" optional true into revReads
-        file "*.trimmed.txt" into trimTracking
-
-        when:
-        params.precheck == false
-
-        script:
-        """
-        #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")
-        library(ShortRead); packageVersion("ShortRead")
-        library(Biostrings); packageVersion("Biostrings")
-
-        out1 <- readRDS("${trimming}")
-        out2 <- filterAndTrim(fwd = paste0("${pairId}",".R1.cutadapt.fastq.gz"),
-                            filt = paste0("${pairId}", ".R1.filtered.fastq.gz"),
-                            rev = paste0("${pairId}",".R2.cutadapt.fastq.gz"),
-                            filt.rev = paste0("${pairId}", ".R2.filtered.fastq.gz"),
-                            maxEE = c(${params.maxEEFor},${params.maxEERev}),
-                            truncLen = c(${params.truncFor},${params.truncRev}),
-                            truncQ = ${params.truncQ},
-                            maxN = ${params.maxN},
-                            rm.phix = as.logical(${params.rmPhiX}),
-                            maxLen = ${params.maxLen},
-                            minLen = ${params.minLen},
-                            compress = TRUE,
-                            verbose = TRUE,
-                            multithread = ${task.cpus})
-        #Change input read counts to actual raw read counts
-        out3 <- cbind(out1, out2)
-        colnames(out3) <- c('input', 'filterN', 'cutadapt', 'filtered')
-        write.csv(out3, paste0("${pairId}", ".trimmed.txt"))
-        """
-    }
 }
-/* Length variable amplicon filtering */
+/* Length variable amplicon filtering - Trim both sides*/
 else if (params.lengthvar == true) {
 	process cutadapt_var {
 		tag { "varfilt_step2_${pairId}" }
 		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
 		input:
-		set pairId, reads from varfilt_step2
+		set pairId, reads from filt_step2
 		file(forP) from forwardP
 		file(revP) from reverseP
 		
 		output:
-		set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into varfilt_step3
+		set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into filt_step3
 		file "*.cutadapt.out" into cutadaptToMultiQC
 
 		when:
@@ -370,51 +329,7 @@ else if (params.lengthvar == true) {
 			-p "${pairId}.R2.cutadapt.fastq.gz" \\
 			"${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
 		"""
-	}
-    process varFilterAndTrim {
-        tag { "varfilt_step3_${pairId}" }
-        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
-
-        input:
-        set pairId, file(reads), file(trimming) from varfilt_step3.join(varfilt_step3Trimming)
-
-        output:
-        set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
-        file "*.R1.filtered.fastq.gz" optional true into forReads
-        file "*.R2.filtered.fastq.gz" optional true into revReads
-        file "*.trimmed.txt" into trimTracking
-
-        when:
-        params.precheck == false
-
-        script:
-        """
-        #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")
-        library(ShortRead); packageVersion("ShortRead")
-        library(Biostrings); packageVersion("Biostrings")
-
-        out1 <- readRDS("${trimming}")
-        out2 <- filterAndTrim(fwd = paste0("${pairId}",".R1.cutadapt.fastq.gz"),
-                            filt = paste0("${pairId}", ".R1.filtered.fastq.gz"),
-                            rev = paste0("${pairId}",".R2.cutadapt.fastq.gz"),
-                            filt.rev = paste0("${pairId}", ".R2.filtered.fastq.gz"),
-                            maxEE = c(${params.maxEEFor},${params.maxEERev}),
-                            truncLen = c(${params.truncFor},${params.truncRev}),
-                            truncQ = ${params.truncQ},
-                            maxN = ${params.maxN},
-                            rm.phix = as.logical(${params.rmPhiX}),
-                            maxLen = ${params.maxLen},
-                            minLen = ${params.minLen},
-                            compress = TRUE,
-                            verbose = TRUE,
-                            multithread = ${task.cpus})
-        #Change input read counts to actual raw read counts
-        out3 <- cbind(out1, out2)
-        colnames(out3) <- c('input', 'filterN', 'cutadapt', 'filtered')
-        write.csv(out3, paste0("${pairId}", ".trimmed.txt"))
-        """
-    }
+	}    
 } else {
     // We need to shut this down!
     cutadaptToMultiQC = Channel.empty()
@@ -424,7 +339,59 @@ else if (params.lengthvar == true) {
 
 /*
  *
- * Step 3: Post-filter Quality control
+ * Step 4: Filter reads
+ *
+ */
+ 
+process FilterAndTrim {
+    tag { "filt_step3_${pairId}" }
+    publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+
+    input:
+    set pairId, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
+
+    output:
+    set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
+    file "*.R1.filtered.fastq.gz" optional true into forReads
+    file "*.R2.filtered.fastq.gz" optional true into revReads
+    file "*.trimmed.txt" into trimTracking
+
+    when:
+    params.precheck == false
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
+    library(Biostrings); packageVersion("Biostrings")
+
+    out1 <- readRDS("${trimming}")
+    out2 <- filterAndTrim(fwd = paste0("${pairId}",".R1.cutadapt.fastq.gz"),
+                        filt = paste0("${pairId}", ".R1.filtered.fastq.gz"),
+                        rev = paste0("${pairId}",".R2.cutadapt.fastq.gz"),
+                        filt.rev = paste0("${pairId}", ".R2.filtered.fastq.gz"),
+                        maxEE = c(${params.maxEEFor},${params.maxEERev}),
+                        truncLen = c(${params.truncFor},${params.truncRev}),
+                        truncQ = ${params.truncQ},
+                        maxN = ${params.maxN},
+                        rm.phix = as.logical(${params.rmPhiX}),
+                        maxLen = ${params.maxLen},
+                        minLen = ${params.minLen},
+                        compress = TRUE,
+                        verbose = TRUE,
+                        multithread = ${task.cpus})
+    #Change input read counts to actual raw read counts
+    out3 <- cbind(out1, out2)
+    colnames(out3) <- c('input', 'filterN', 'cutadapt', 'filtered')
+    write.csv(out3, paste0("${pairId}", ".trimmed.txt"))
+    """
+}
+
+
+/*
+ *
+ * Step 5: Post-filter Quality control
  *
  */
 
@@ -496,7 +463,7 @@ process mergeTrimmedTable {
 
 /*
  *
- * Step 4: Learn error rates (run on all samples)
+ * Step 6: Learn error rates (run on all samples)
  *
  */
 
@@ -556,7 +523,7 @@ process LearnErrors {
 
 /*
  *
- * Step 5: Dereplication, ASV Inference, Merge Pairs
+ * Step 7: Dereplication, ASV Inference, Merge Pairs
  *
  */
 
@@ -758,7 +725,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
 /*
  *
- * Step 6: ASV filtering
+ * Step 8: ASV filtering
  *
  */
 
@@ -803,7 +770,7 @@ if (!params.skipChimeraDetection) {
 
 /*
  *
- * Step 7: Taxonomic assignment
+ * Step 9: Taxonomic assignment
  *
  */
 
@@ -993,7 +960,7 @@ if (params.reference) {
 
 /*
  *
- * Step 7: Rename ASVs & Generate seuqence tables
+ * Step 10: Rename ASVs & Generate seuqence tables
  *
  * A number of downstream programs have issues with sequences as IDs, here we
  * (optionally) rename these
@@ -1182,7 +1149,7 @@ process GenerateTaxTables {
 
 /*
  *
- * Step 9: Alignment & Phylogenetic tree
+ * Step 11: Alignment & Phylogenetic tree
  *
  */
 
@@ -1322,7 +1289,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
 /*
  *
- * Step 10: Track reads
+ * Step 12: Track reads
  *
  */
 
