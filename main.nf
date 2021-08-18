@@ -220,15 +220,86 @@ process runMultiQC {
  * Step 2: Filter and trim (run per sample?)
  *
  */
- 
-/* non length variable amplicon filtering */
-if (params.lengthvar == false){
-    process filterAndTrim {
-        tag { "nonvar_${pairId}" }
+process Nfilter {
+    tag { "nfilter_${pairId}" }
+
+    input:
+    set pairId, file(reads) from dada2ReadPairs
+
+    output:
+    set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
+	set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into varfilt_step2
+    set val(pairId), "${pairId}.out.RDS" into filt_step3  // needed for join() later
+	set val(pairId), "${pairId}.out.RDS" into varfilt_step3  // needed for join() later
+	file('forward_rc') into forwardP
+    file('reverse_rc') into reverseP
+
+    when:
+    params.precheck == false
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
+    library(Biostrings); packageVersion("Biostrings")
+
+    #Filter out reads with N's
+    out1 <- filterAndTrim(fwd = "${reads[0]}",
+                        filt = paste0("${pairId}", ".R1.noN.fastq.gz"),
+                        rev = "${reads[1]}",
+                        filt.rev = paste0("${pairId}", ".R2.noN.fastq.gz"),
+                        maxN = 0,
+                        multithread = ${task.cpus})
+    FWD.RC <- dada2:::rc("${params.fwdprimer}")
+    REV.RC <- dada2:::rc("${params.revprimer}")
+	
+	# Write out reverse complements of primers
+    forP <- file("forward_rc")
+    writeLines(FWD.RC, forP)
+    close(forP)
+
+    revP <- file("reverse_rc")
+    writeLines(REV.RC, revP)
+    close(revP)
+    
+    saveRDS(out1, "${pairId}.out.RDS")
+    """
+}
+
+// filt
+if (params.lengthvar == false) {
+	process cutadapt {
+		tag { "step2_${pairId}" }
+		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+
+		input:
+		set pairId, reads from filt_step2
+		
+		output:
+		set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into filt_step3
+		file "*.cutadapt.out" into cutadaptToMultiQC
+
+		when:
+		params.precheck == false
+
+		script:
+		"""
+		cutadapt -g "${params.fwdprimer}" \\
+			-G "${params.revprimer}" \\
+			--cores ${task.cpus} \\
+			-n 2 \\
+			-o "${pairId}.R1.cutadapt.fastq.gz" \\
+			-p "${pairId}.R2.cutadapt.fastq.gz" \\
+			"${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+		"""
+	}
+	process FilterAndTrim {
+        tag { "filt_step3_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
-        set pairId, file(reads) from dada2ReadPairs
+        set pairId, file(reads), file(trimming) from filt_step3.join(filt_step3)
 
         output:
         set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
@@ -240,120 +311,72 @@ if (params.lengthvar == false){
         params.precheck == false
 
         script:
-        phix = params.rmPhiX ? '--rmPhiX TRUE' : '--rmPhiX FALSE'
-        """
-        16S_FilterAndTrim.R ${phix} --id ${pairId} \\
-            --fwd ${reads[0]} \\
-            --rev ${reads[1]} \\
-            --cpus ${task.cpus} \\
-            --trimFor ${params.trimFor} \\
-            --trimRev ${params.trimRev} \\
-            --truncFor ${params.truncFor} \\
-            --truncRev ${params.truncRev} \\
-            --truncQ ${params.truncQ} \\
-            --maxEEFor ${params.maxEEFor} \\
-            --maxEERev ${params.maxEERev} \\
-            --maxN ${params.maxN} \\
-            --maxLen ${params.maxLen} \\
-            --minLen ${params.minLen}
-        """
-    }
-    cutadaptToMultiQC = Channel.empty()
-} 
-/* Length variable amplicon filtering */
-else if (params.lengthvar == true) {
-
-    process Nfilter {
-        tag { "var_step1_${pairId}" }
-
-        input:
-        set pairId, file(reads) from dada2ReadPairs
-
-        output:
-        set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into var_step2
-        set val(pairId), "${pairId}.out.RDS" into var_step3Trimming  // needed for join() later
-        file('forward_rc') into forwardP
-        file('reverse_rc') into reverseP
-
-        when:
-        params.precheck == false
-
-        script:
         """
         #!/usr/bin/env Rscript
         library(dada2); packageVersion("dada2")
         library(ShortRead); packageVersion("ShortRead")
         library(Biostrings); packageVersion("Biostrings")
 
-        #Filter out reads with N's
-        out1 <- filterAndTrim(fwd = "${reads[0]}",
-                            filt = paste0("${pairId}", ".R1.noN.fastq.gz"),
-                            rev = "${reads[1]}",
-                            filt.rev = paste0("${pairId}", ".R2.noN.fastq.gz"),
-                            maxN = 0,
+        out1 <- readRDS("${trimming}")
+        out2 <- filterAndTrim(fwd = paste0("${pairId}",".R1.cutadapt.fastq.gz"),
+                            filt = paste0("${pairId}", ".R1.filtered.fastq.gz"),
+                            rev = paste0("${pairId}",".R2.cutadapt.fastq.gz"),
+                            filt.rev = paste0("${pairId}", ".R2.filtered.fastq.gz"),
+                            maxEE = c(${params.maxEEFor},${params.maxEERev}),
+                            truncLen = c(${params.truncFor},${params.truncRev}),
+                            truncQ = ${params.truncQ},
+                            maxN = ${params.maxN},
+                            rm.phix = as.logical(${params.rmPhiX}),
+                            maxLen = ${params.maxLen},
+                            minLen = ${params.minLen},
+                            compress = TRUE,
+                            verbose = TRUE,
                             multithread = ${task.cpus})
-        FWD.RC <- dada2:::rc("${params.fwdprimer}")
-        REV.RC <- dada2:::rc("${params.revprimer}")
-		
-		# Write out forward complements of primers
-		forP <- file("forward")
-        writeLines("${params.fwdprimer}", forP)
-        close(forP)
-		
-		revP <- file("reverse_rc")
-        writeLines("${params.revprimer}", revP)
-        close(revP)
-		
-		# Write out reverse complements of primers
-        forP_rc <- file("forward_rc")
-        writeLines(FWD.RC, forP_rc)
-        close(forP_rc)
-
-        revP_rc <- file("reverse_rc")
-        writeLines(REV.RC, revP_rc)
-        close(revP_rc)
-        
-        saveRDS(out1, "${pairId}.out.RDS")
+        #Change input read counts to actual raw read counts
+        out3 <- cbind(out1, out2)
+        colnames(out3) <- c('input', 'filterN', 'cutadapt', 'filtered')
+        write.csv(out3, paste0("${pairId}", ".trimmed.txt"))
         """
     }
-	//TODO: get cutadapt to 
-    process cutadapt {
-        tag { "var_step2_${pairId}" }
-        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+}
+/* Length variable amplicon filtering */
+else if (params.lengthvar == true) {
+	process cutadapt_var {
+		tag { "varfilt_step2_${pairId}" }
+		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
-        input:
-        set pairId, reads from var_step2
-        file(forP) from forwardP
-        file(revP) from reverseP
-        
-        output:
-        set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into var_step3
-        file "*.cutadapt.out" into cutadaptToMultiQC
+		input:
+		set pairId, reads from varfilt_step2
+		file(forP) from forwardP
+		file(revP) from reverseP
+		
+		output:
+		set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into varfilt_step3
+		file "*.cutadapt.out" into cutadaptToMultiQC
 
-        when:
-        params.precheck == false
+		when:
+		params.precheck == false
 
-        script:
-        """
-        FWD_PRIMER=\$(<forward_rc)
-        REV_PRIMER=\$(<reverse_rc)
-        
-        cutadapt -g "${params.fwdprimer}" -a \$FWD_PRIMER \\
-            -G "${params.revprimer}" -A \$REV_PRIMER \\
-            --cores ${task.cpus} \\
-            -n 2 \\
-            -o "${pairId}.R1.cutadapt.fastq.gz" \\
-            -p "${pairId}.R2.cutadapt.fastq.gz" \\
-            "${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
-        """
-    }
-	//TODO: Split the length variable trim here
+		script:
+		"""
+		FWD_PRIMER=\$(<forward_rc)
+		REV_PRIMER=\$(<reverse_rc)
+		
+		cutadapt -g "${params.fwdprimer}" -a \$FWD_PRIMER \\
+			-G "${params.revprimer}" -A \$REV_PRIMER \\
+			--cores ${task.cpus} \\
+			-n 2 \\
+			-o "${pairId}.R1.cutadapt.fastq.gz" \\
+			-p "${pairId}.R2.cutadapt.fastq.gz" \\
+			"${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+		"""
+	}
     process varFilterAndTrim {
-        tag { "var_step3_${pairId}" }
+        tag { "varfilt_step3_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
-        set pairId, file(reads), file(trimming) from var_step3.join(var_step3Trimming)
+        set pairId, file(reads), file(trimming) from varfilt_step3.join(varfilt_step3)
 
         output:
         set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
