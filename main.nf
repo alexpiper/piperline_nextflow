@@ -176,7 +176,7 @@ log.info "========================================="
 
 /*
  *
- * Step 1: Filter and trim (run per sample?)
+ * Step 1: Pre-filter Quality control
  *
  */
 
@@ -215,12 +215,53 @@ process runMultiQC {
     """
 }
 
+/*
+ *
+ * Step 2: Filter and trim (run per sample?)
+ *
+ */
+ 
+/* non length variable amplicon filtering */
+else if (params.lengthvar == false){
+    process filterAndTrim {
+        tag { "nonvar_${pairId}" }
+        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+
+        input:
+        set pairId, file(reads) from dada2ReadPairs
+
+        output:
+        set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
+        file "*.R1.filtered.fastq.gz" optional true into forReads
+        file "*.R2.filtered.fastq.gz" optional true into revReads
+        file "*.trimmed.txt" into trimTracking
+
+        when:
+        params.precheck == false
+
+        script:
+        phix = params.rmPhiX ? '--rmPhiX TRUE' : '--rmPhiX FALSE'
+        """
+        16S_FilterAndTrim.R ${phix} --id ${pairId} \\
+            --fwd ${reads[0]} \\
+            --rev ${reads[1]} \\
+            --cpus ${task.cpus} \\
+            --trimFor ${params.trimFor} \\
+            --trimRev ${params.trimRev} \\
+            --truncFor ${params.truncFor} \\
+            --truncRev ${params.truncRev} \\
+            --truncQ ${params.truncQ} \\
+            --maxEEFor ${params.maxEEFor} \\
+            --maxEERev ${params.maxEERev} \\
+            --maxN ${params.maxN} \\
+            --maxLen ${params.maxLen} \\
+            --minLen ${params.minLen}
+        """
+    }
+    cutadaptToMultiQC = Channel.empty()
+} 
 /* Length variable amplicon filtering */
-
-// Note: should explore cutadapt options more: https://github.com/benjjneb/dada2/issues/785
-// https://cutadapt.readthedocs.io/en/stable/guide.html#more-than-one
-
-if (params.lengthvar == true) {
+else if (params.lengthvar == true) {
 
     process Nfilter {
         tag { "var_step1_${pairId}" }
@@ -253,23 +294,29 @@ if (params.lengthvar == true) {
                             multithread = ${task.cpus})
         FWD.RC <- dada2:::rc("${params.fwdprimer}")
         REV.RC <- dada2:::rc("${params.revprimer}")
-        
-        # this may switch to 'env' in the process at some point: 
-        # https://www.nextflow.io/docs/latest/process.html?highlight=env#output-env
-        # untested within R though
-        
-        forP <- file("forward_rc")
-        writeLines(FWD.RC, forP)
+		
+		# Write out forward complements of primers
+		forP <- file("forward")
+        writeLines("${params.fwdprimer}", forP)
         close(forP)
-
-        revP <- file("reverse_rc")
-        writeLines(REV.RC, revP)
+		
+		revP <- file("reverse_rc")
+        writeLines("${params.revprimer}", revP)
         close(revP)
+		
+		# Write out reverse complements of primers
+        forP_rc <- file("forward_rc")
+        writeLines(FWD.RC, forP_rc)
+        close(forP_rc)
+
+        revP_rc <- file("reverse_rc")
+        writeLines(REV.RC, revP_rc)
+        close(revP_rc)
         
         saveRDS(out1, "${pairId}.out.RDS")
         """
     }
-    
+	//TODO: get cutadapt to 
     process cutadapt {
         tag { "var_step2_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
@@ -300,7 +347,7 @@ if (params.lengthvar == true) {
             "${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
         """
     }
-
+	//TODO: Split the length variable trim here
     process varFilterAndTrim {
         tag { "var_step3_${pairId}" }
         publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
@@ -345,52 +392,18 @@ if (params.lengthvar == true) {
         write.csv(out3, paste0("${pairId}", ".trimmed.txt"))
         """
     }
-    
-}
-/* non length variable amplicon filtering */
-else if (params.lengthvar == false){
-    process filterAndTrim {
-        tag { "nonvar_${pairId}" }
-        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
-
-        input:
-        set pairId, file(reads) from dada2ReadPairs
-
-        output:
-        set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
-        file "*.R1.filtered.fastq.gz" optional true into forReads
-        file "*.R2.filtered.fastq.gz" optional true into revReads
-        file "*.trimmed.txt" into trimTracking
-
-        when:
-        params.precheck == false
-
-        script:
-        phix = params.rmPhiX ? '--rmPhiX TRUE' : '--rmPhiX FALSE'
-        """
-        16S_FilterAndTrim.R ${phix} --id ${pairId} \\
-            --fwd ${reads[0]} \\
-            --rev ${reads[1]} \\
-            --cpus ${task.cpus} \\
-            --trimFor ${params.trimFor} \\
-            --trimRev ${params.trimRev} \\
-            --truncFor ${params.truncFor} \\
-            --truncRev ${params.truncRev} \\
-            --truncQ ${params.truncQ} \\
-            --maxEEFor ${params.maxEEFor} \\
-            --maxEERev ${params.maxEERev} \\
-            --maxN ${params.maxN} \\
-            --maxLen ${params.maxLen} \\
-            --minLen ${params.minLen}
-        """
-    }
-    cutadaptToMultiQC = Channel.empty()
 } else {
     // We need to shut this down!
     cutadaptToMultiQC = Channel.empty()
     filteredReads = Channel.empty()
     filteredReadsforQC = Channel.empty()
 }
+
+/*
+ *
+ * Step 3: Post-filter Quality control
+ *
+ */
 
 process runFastQC_postfilterandtrim {
     tag { "rFQC_post_FT.${pairId}" }
@@ -460,7 +473,7 @@ process mergeTrimmedTable {
 
 /*
  *
- * Step 2: Learn error rates (run on all samples)
+ * Step 4: Learn error rates (run on all samples)
  *
  */
 
@@ -520,13 +533,7 @@ process LearnErrors {
 
 /*
  *
- * Step 3: Dereplication, Sample Inference, Merge Pairs
- *
- */
-
-/*
- *
- * Step 4: Construct sequence table
+ * Step 5: Dereplication, ASV Inference, Merge Pairs
  *
  */
 
@@ -728,10 +735,11 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
 /*
  *
- * Step 8: Remove chimeras
+ * Step 6: ASV filtering
  *
  */
 
+// TODO: add length filter, codon checks, PHMM alignment
 if (!params.skipChimeraDetection) {
     process RemoveChimeras {
         tag { "RemoveChimeras" }
@@ -772,11 +780,11 @@ if (!params.skipChimeraDetection) {
 
 /*
  *
- * Step 9: Taxonomic assignment
+ * Step 7: Taxonomic assignment
  *
  */
 
-
+// TODO: Add IDTAXA + Blast
 if (params.reference) {
 	refFile = file(params.reference)
     if (params.taxassignment == 'rdp') {
@@ -962,7 +970,7 @@ if (params.reference) {
 
 /*
  *
- * Step 8.5: Rename ASVs
+ * Step 7: Rename ASVs & Generate seuqence tables
  *
  * A number of downstream programs have issues with sequences as IDs, here we
  * (optionally) rename these
@@ -1151,14 +1159,7 @@ process GenerateTaxTables {
 
 /*
  *
- * Step 10: Align and construct phylogenetic tree
- *
- */
-
-
-/*
- *
- * Step 10a: Alignment
+ * Step 9: Alignment & Phylogenetic tree
  *
  */
 
@@ -1362,6 +1363,8 @@ process ReadTracking {
     write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
     """
 }
+
+// TODO: Add phyloseq object
 
 /*
  * Completion e-mail notification
