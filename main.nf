@@ -193,11 +193,10 @@ if (params.subsample == true) {
 		set val(pairId), "${pairId}.R[12].fastq.gz" optional true into dada2ReadPairsToFilt, dada2ReadPairsToQual
 		
 		"""
-		seqtk sample -s100 ${reads[0]} 10000 > ${pairId}.R1.sub.fastq
-		seqtk sample -s100 ${reads[1]} 10000 > ${pairId}.R2.sub.fastq
-		mv ${pairId}.R1.sub.fastq ${reads[0]}
-		mv ${pairId}.R2.sub.fastq ${reads[1]}
-		pigz -p ${task.cpus} *.fastq
+		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > ${pairId}.R1.sub.fastq.gz
+		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > ${pairId}.R2.sub.fastq.gz
+		mv ${pairId}.R1.sub.fastq.gz ${reads[0]}
+		mv ${pairId}.R2.sub.fastq.gz ${reads[1]}
 		"""
 	}
 } else {
