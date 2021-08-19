@@ -434,6 +434,7 @@ if (params.lengthvar == false) {
 
 		script:
 		"""
+		#!/bin/bash
 		cutadapt \\
 			-g file:forwardP.fa \\		
 			-G file:reverseP.fa \\
@@ -448,6 +449,7 @@ if (params.lengthvar == false) {
 }
 /* Length variable amplicon filtering - Trim both sides*/
 else if (params.lengthvar == true) {
+	//TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
 	process cutadapt_var {
 		tag { "varfilt_step2_${sample_id}" }
 		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
