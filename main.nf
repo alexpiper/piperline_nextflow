@@ -189,14 +189,14 @@ if (params.subsample == true) {
 		tuple sample_id, file(reads) from samples_ch
 
 		output:
-		val(sample_id), "${sample_id}.R[12].fastq.gz" optional true into samples_tofilt_ch
-    	file("subsampled/${sample_id}.R[12].fastq.gz") into samples_toqual_ch
+    	file("subsampled/*_R[12]_001.fastq.gz") into samples_toqual_ch
+		tuple sample_id, file("subsampled/${sample_id}_R[12]_001.fastq.gz") into samples_tofilt_ch
 
 		"""
 		#!/bin/bash
 		mkdir subsampled
-		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}.R1.sub.fastq.gz
-		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}.R2.sub.fastq.gz
+		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}_R1_001.fastq.gz
+		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}_R2_001.fastq.gz
 		"""
 	}
 } else {
@@ -219,7 +219,7 @@ process runFastQC {
     file(in_fastq) from samples_toqual_ch.collect()
 
     output:
-    file '*_fastqc.{zip,html}' into fastqc_files,fastqc_files2
+    file '*_fastqc.{zip,html}' into fastqc_files_ch,fastqc_files2_ch
 
     """
     fastqc --nogroup -q ${in_fastq.get(0)} ${in_fastq.get(1)}
@@ -232,7 +232,7 @@ process runMultiQC {
     publishDir "${params.outdir}/MultiQC-Raw", mode: 'copy', overwrite: true
 
     input:
-    file('./raw-seq/*') from fastqc_files.collect()
+    file('./raw-seq/*') from fastqc_files_ch.collect()
 
     output:
     file "*_report.html" into multiqc_report
@@ -534,7 +534,7 @@ process runMultiQC_postfilterandtrim {
     publishDir "${params.outdir}/MultiQC-Post-FilterTrim", mode: 'copy', overwrite: true
 
     input:
-    file('./raw-seq/*') from fastqc_files2.collect()
+    file('./raw-seq/*') from fastqc_files2_ch.collect()
     file('./trimmed-seq/*') from fastqc_files_post.collect()
     file('./cutadapt/*') from cutadaptToMultiQC.collect()
 
