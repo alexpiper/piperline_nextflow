@@ -385,28 +385,28 @@ process Nfilter {
                         multithread = ${task.cpus})
 						
 	# Write out fasta of primers - Handles multiple primers
-	Fprimer_name <- unlist(stringr::str_split("${params.Fprimer_name}", ";"))
-	Rprimer_name <- unlist(stringr::str_split("${params.Rprimer_name}", ";"))
+	Fprimer_name <- unlist(stringr::str_split("${params.fwdprimer_name}", ";"))
+	Rprimer_name <- unlist(stringr::str_split("${params.revprimer_name}", ";"))
 	
 	Fprimers <- unlist(stringr::str_split("${params.fwdprimer}", ";"))
 	names(Fprimers) <- Fprimer_name
 	Rprimers <- unlist(stringr::str_split("${params.revprimer}", ";"))
 	names(Rprimers) <- Rprimer_name
 	
-	Biostrings::writeXStringSet(Biostrings::DNAStringSet(Fprimers, "forwardP.fa"))
-	Biostrings::writeXStringSet(Biostrings::DNAStringSet(Rprimers, "reverseP.fa"))
-	
-	# Write out fasta of reverse complement primers
-	# Used for checking for read-through into the other end of molecule for variable length markers
-	fwd_rc <- sapply(Fprimers, dada2:::rc)
-	names(fwd_rc) <- Fprimer_name
+		Biostrings::writeXStringSet(Biostrings::DNAStringSet(Fprimers), "forwardP.fa")
+		Biostrings::writeXStringSet(Biostrings::DNAStringSet(Rprimers), "reverseP.fa")
+		
+		# Write out fasta of reverse complement primers
+		# Used for checking for read-through into the other end of molecule for variable length markers
+		fwd_rc <- sapply(Fprimers, dada2:::rc)
+		names(fwd_rc) <- Fprimer_name
 
-	rev_rc <- sapply(Rprimers, dada2:::rc)
-	names(rev_rc) <- Rprimer_name
-	
-	Biostrings::writeXStringSet(Biostrings::DNAStringSet(fwd_rc, "forwardP_rc.fa"))
-	Biostrings::writeXStringSet(Biostrings::DNAStringSet(rev_rc, "reverseP_rc.fa"))
-	
+		rev_rc <- sapply(Rprimers, dada2:::rc)
+		names(rev_rc) <- Rprimer_name
+		
+		Biostrings::writeXStringSet(Biostrings::DNAStringSet(fwd_rc), "forwardP_rc.fa")
+		Biostrings::writeXStringSet(Biostrings::DNAStringSet(rev_rc), "reverseP_rc.fa")
+		
     saveRDS(out1, "${sample_id}.out.RDS")
     """
 }
