@@ -190,13 +190,16 @@ if (params.subsample == true) {
 		set pairId, file(in_fastq) from dada2ReadPairs
 
 		output:
-		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairs
+		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairsToFilt
 
 		"""
 		seqtk ${in_fastq.get(0)} -s100 read1.fq 10000 > ${pairId}.R[12].sub.fastq.gz
 		seqtk ${in_fastq.get(1)} -s100 read2.fq 10000 > ${pairId}.R[12].sub.fastq.gz
 		"""
 	}
+} else {
+    // use original reads
+    dada2ReadPairsToFilt = dada2ReadPairs
 }
 
 /*
@@ -245,7 +248,7 @@ process runMultiQC {
 //    tag { "summarise_index_${pairId}" }
 //
 //    input:
-//    set pairId, file(reads) from dada2ReadPairs
+//    set pairId, file(reads) from dada2ReadPairsToFilt
 //
 //    output:
 //    file '*_indexes.txt' into index_files
@@ -335,7 +338,7 @@ process Nfilter {
     tag { "nfilter_${pairId}" }
 
     input:
-    set pairId, file(reads) from dada2ReadPairs
+    set pairId, file(reads) from dada2ReadPairsToFilt
 
     output:
     set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
