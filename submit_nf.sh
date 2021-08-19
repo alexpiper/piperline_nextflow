@@ -43,7 +43,7 @@ cp /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3/* /group/pathogens/
 cd /group/pathogens/Alexp/Metabarcoding/test/COI
 nextflow pull alexpiper/piperline
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
---fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --fwdprimer_name 'fwhR2n' \
+--fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
 --reference 'idtaxa_bftrimmed.rds' \
 -profile basc --subsample true
 
@@ -57,5 +57,6 @@ done
 
 cd /group/pathogens/Alexp/Metabarcoding/test/COI
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
---fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --reference 'idtaxa_bftrimmed.rds' \
--profile basc --subsample true
+--fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
+--reference 'idtaxa_bftrimmed.rds' \
+-profile basc --subsample true -resume

@@ -362,8 +362,7 @@ process Nfilter {
     output:
     set val(sample_id), "${sample_id}.R[12].noN.fastq.gz" optional true into filt_step2
     set val(sample_id), "${sample_id}.out.RDS" into filt_step3Trimming // needed for join() later
-	file('forward_rc') into forwardP
-    file('reverse_rc') into reverseP
+	file('forwardP.fa'), file('reverseP.fa'), file('forwardP_rc.fa'), file('reverseP_rc.fa') into primers
 
     when:
     params.precheck == false
@@ -424,6 +423,7 @@ if (params.lengthvar == false) {
 
 		input:
 		set sample_id, reads from filt_step2
+		file('forwardP.fa'), file('reverseP.fa') from primers
 		
 		output:
 		set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
@@ -434,7 +434,6 @@ if (params.lengthvar == false) {
 
 		script:
 		"""
-		#!/bin/bash
 		cutadapt \\
 			-g file:forwardP.fa \\		
 			-G file:reverseP.fa \\
@@ -456,8 +455,7 @@ else if (params.lengthvar == true) {
 
 		input:
 		set sample_id, reads from filt_step2
-		file(forP) from forwardP
-		file(revP) from reverseP
+		file('forwardP.fa'), file('reverseP.fa'), file('forwardP_rc.fa'), file('reverseP_rc.fa') from primers
 		
 		output:
 		set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
