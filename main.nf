@@ -193,8 +193,8 @@ if (params.subsample == true) {
 		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairsToFilt
 
 		"""
-		seqtk -s100 ${in_fastq.get(0)} 10000 > ${pairId}.R[12].sub.fastq.gz
-		seqtk -s100 ${in_fastq.get(1)} 10000 > ${pairId}.R[12].sub.fastq.gz
+		seqtk sample -s100 ${in_fastq.get(0)} 10000 > ${pairId}.R[12].sub.fastq.gz
+		seqtk sample -s100 ${in_fastq.get(1)} 10000 > ${pairId}.R[12].sub.fastq.gz
 		"""
 	}
 } else {
