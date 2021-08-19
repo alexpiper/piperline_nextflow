@@ -126,7 +126,7 @@ if( !(workflow.runName ==~ /[a-z]+_[a-z]+/) ){
 Channel
     .fromFilePairs( params.reads )
     .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
-    .into { dada2ReadPairs }
+    .set { samples_ch }
 
 // Header log info
 log.info "==================================="
@@ -187,22 +187,24 @@ if (params.subsample == true) {
 		publishDir "${params.outdir}/subsampled", mode: "copy", overwrite: true
 
 		input:
-		set pairId, file(reads) from dada2ReadPairs
+		set pairId, file(reads) from samples_ch
 
 		output:
-		set val(pairId), "${pairId}.R[12].fastq.gz" optional true into dada2ReadPairsToFilt, dada2ReadPairsToQual
-		
+		set val(pairId), "${params.outdir}/subsampled/${pairId}.R[12].fastq.gz" optional true into samples_tofilt_ch
+    	file "*${pairId}.R[12].fastq.gz" into samples_toqual_ch
+
 		"""
+		#!/bin/bash
 		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > ${pairId}.R1.sub.fastq.gz
 		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > ${pairId}.R2.sub.fastq.gz
-		mv ${pairId}.R1.sub.fastq.gz "${reads[0]}"
-		mv ${pairId}.R2.sub.fastq.gz "${reads[1]}"
+		mv ${pairId}.R1.sub.fastq.gz  ${pairId}.R1.fastq.gz
+		mv ${pairId}.R2.sub.fastq.gz  ${pairId}.R3.fastq.gz
 		"""
 	}
 } else {
     // use original reads
-    dada2ReadPairsToFilt = dada2ReadPairs
-	dada2ReadPairsToQual = dada2ReadPairs
+    samples_tofilt_ch = samples_ch
+	samples_toqual_ch = samples_ch
 }
 
 /*
@@ -216,17 +218,15 @@ process runFastQC {
     publishDir "${params.outdir}/FASTQC-Raw", mode: "copy", overwrite: true
 
     input:
-	set pairId, reads from dada2ReadPairsToQual
-    //set pairId, file(in_fastq) from dada2ReadPairsToQual
+    file(in_fastq) from samples_toqual_ch.collect()
 
     output:
     file '*_fastqc.{zip,html}' into fastqc_files,fastqc_files2
 
     """
-    fastqc --nogroup -q "${reads[0]}" "${reads[1]}"
+    fastqc --nogroup -q ${in_fastq.get(0)} ${in_fastq.get(1)}
     """
 }
-
 
 // TODO: combine MultiQC reports and split by directory (no need for two)
 process runMultiQC {
@@ -252,7 +252,7 @@ process runMultiQC {
 //    tag { "summarise_index_${pairId}" }
 //
 //    input:
-//    set pairId, file(reads) from dada2ReadPairsToFilt
+//    set pairId, file(reads) from samples_tofilt_ch
 //
 //    output:
 //    file '*_indexes.txt' into index_files
@@ -342,7 +342,7 @@ process Nfilter {
     tag { "nfilter_${pairId}" }
 
     input:
-    set pairId, reads from dada2ReadPairsToFilt
+    set pairId, reads from samples_tofilt_ch
 
     output:
     set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
