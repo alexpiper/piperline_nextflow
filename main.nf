@@ -2,7 +2,7 @@
 
 /*
 ========================================================================================
-               D A D A 2   P I P E L I N E
+					P I P E R L I N E
 ========================================================================================
  DADA2 NEXTFLOW PIPELINE FOR BIOSECURITY METABARCODING
 
@@ -18,10 +18,10 @@ def helpMessage() {
 
     This pipeline can be run specifying parameters in a config file or with command line flags.
     The typical example for running the pipeline with command line flags is as follows:
-    nextflow run uct-cbio/piperline --reads '*_R{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --reference 'gg_13_8_train_set_97.fa.gz' -profile uct_hex
+    nextflow run alexpiper/piperline --reads '*_R{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --reference 'gg_13_8_train_set_97.fa.gz' -profile uct_hex
 
     The typical command for running the pipeline with your own config (instead of command line flags) is as follows:
-    nextflow run uct-cbio/piperline -c dada2_user_input.config -profile uct_hex
+    nextflow run alexpiper/piperline -c dada2_user_input.config -profile uct_hex
     where:
     dada2_user_input.config is the configuration file (see example 'dada2_user_input.config')
     NB: -profile uct_hex still needs to be specified from the command line
@@ -67,7 +67,7 @@ def helpMessage() {
 	  --subsample					subsample a random 10,000 reads to speed up process of testing
 
     Help:
-      --help                        Will print out summary above when executing nextflow run uct-cbio/piperline
+      --help                        Will print out summary above when executing nextflow run alexpiper/piperline
 
     Merging arguments (optional):
       --minOverlap                  The minimum length of the overlap required for merging R1 and R2; default=20 (dada2 package default=12)
@@ -123,6 +123,8 @@ if( !(workflow.runName ==~ /[a-z]+_[a-z]+/) ){
   custom_runName = workflow.runName
 }
 
+
+// Create main channels
 Channel
     .fromFilePairs( params.reads )
     .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
@@ -177,32 +179,46 @@ log.info "========================================="
 
 /*
  *
- * Step 0: Subsample for testing
+ * Step 0: Copy read files and optionally subsample for testing
  *
  */
 
 if (params.subsample == true) {
-	process subsample {
+	process setup_subsample {
 		tag { "subsample.${sample_id}" }
 
 		input:
 		tuple sample_id, file(reads) from samples_ch
 
 		output:
-		tuple sample_id, file("subsampled/${sample_id}_R1_001.fastq.gz"), file("subsampled/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
-		tuple sample_id, file("subsampled/*R[12]_001.fastq.gz") into samples_tofilt_ch
+		tuple sample_id, file("data/${sample_id}_R1_001.fastq.gz"), file("data/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
+		tuple sample_id, file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
 
 		"""
 		#!/bin/bash
-		mkdir subsampled
-		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}_R1_001.fastq.gz
-		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}_R2_001.fastq.gz
+		mkdir data
+		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > data/${sample_id}_R1_001.fastq.gz
+		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > data/${sample_id}_R2_001.fastq.gz
 		"""
 	}
-} else {
-    // use original reads
-    samples_tofilt_ch = samples_ch
-	samples_toqual_ch = samples_ch
+} else if (params.subsample == false){
+	process setup {
+		tag { "setup.${sample_id}" }
+
+		input:
+		tuple sample_id, file(reads) from samples_ch
+
+		output:
+		tuple sample_id, file("data/${sample_id}_R1_001.fastq.gz"), file("data/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
+		tuple sample_id, file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
+
+		"""
+		#!/bin/bash
+		mkdir data
+		cp ${reads[0]} data/${sample_id}_R1_001.fastq.gz
+		cp ${reads[1]} data/${sample_id}_R2_001.fastq.gz
+		"""
+	}
 }
 
 /*
@@ -1011,9 +1027,9 @@ if (params.reference) {
             dna <- DNAStringSet(getSequences(seqtab))
 
             # load database; this should be a RData file
-			if (stringr::str_detect("${refFile}", ".RData)){
+			if (stringr::str_detect("${refFile}", ".RData")){
 				load("${refFile}")
-			} else if(stringr::str_detect("${refFile}", ".rds)){
+			} else if(stringr::str_detect("${refFile}", ".rds")){
 				trainingSet <- readRDS("${refFile}")
 			}
 
