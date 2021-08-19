@@ -126,7 +126,7 @@ if( !(workflow.runName ==~ /[a-z]+_[a-z]+/) ){
 Channel
     .fromFilePairs( params.reads )
     .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
-    .into { dada2ReadPairsToQual; dada2ReadPairs }
+    .into { dada2ReadPairs }
 
 // Header log info
 log.info "==================================="
@@ -190,8 +190,8 @@ if (params.subsample == true) {
 		set pairId, file(in_fastq) from dada2ReadPairs
 
 		output:
-		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairsToFilt
-
+		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairsToFilt, dada2ReadPairsToQual
+		
 		"""
 		seqtk sample -s100 ${in_fastq.get(0)} 10000 > ${pairId}.R[12].sub.fastq.gz
 		seqtk sample -s100 ${in_fastq.get(1)} 10000 > ${pairId}.R[12].sub.fastq.gz
@@ -200,6 +200,7 @@ if (params.subsample == true) {
 } else {
     // use original reads
     dada2ReadPairsToFilt = dada2ReadPairs
+	dada2ReadPairsToQual = dada2ReadPairs
 }
 
 /*
