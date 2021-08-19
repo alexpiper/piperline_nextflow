@@ -183,22 +183,20 @@ log.info "========================================="
 
 if (params.subsample == true) {
 	process subsample {
-		tag { "subsample.${pairId}" }
-		publishDir "${params.outdir}/subsampled", mode: "copy", overwrite: true
+		tag { "subsample.${sample_id}" }
 
 		input:
-		set pairId, file(reads) from samples_ch
+		tuple sample_id, file(reads) from samples_ch
 
 		output:
-		set val(pairId), "${params.outdir}/subsampled/${pairId}.R[12].fastq.gz" optional true into samples_tofilt_ch
-    	file "*${pairId}.R[12].fastq.gz" into samples_toqual_ch
+		val(sample_id), "${sample_id}.R[12].fastq.gz" optional true into samples_tofilt_ch
+    	file("subsampled/${sample_id}.R[12].fastq.gz") into samples_toqual_ch
 
 		"""
 		#!/bin/bash
-		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > ${pairId}.R1.sub.fastq.gz
-		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > ${pairId}.R2.sub.fastq.gz
-		mv ${pairId}.R1.sub.fastq.gz  ${pairId}.R1.fastq.gz
-		mv ${pairId}.R2.sub.fastq.gz  ${pairId}.R3.fastq.gz
+		mkdir subsampled
+		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}.R1.sub.fastq.gz
+		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > subsampled/${sample_id}.R2.sub.fastq.gz
 		"""
 	}
 } else {
@@ -214,7 +212,7 @@ if (params.subsample == true) {
  */
 
 process runFastQC {
-    tag { "rFQC.${pairId}" }
+    tag { "rFQC.${sample_id}" }
     publishDir "${params.outdir}/FASTQC-Raw", mode: "copy", overwrite: true
 
     input:
@@ -249,10 +247,10 @@ process runMultiQC {
 
 // Summarise indexes used for each sample
 //process summarise_index {
-//    tag { "summarise_index_${pairId}" }
+//    tag { "summarise_index_${sample_id}" }
 //
 //    input:
-//    set pairId, file(reads) from samples_tofilt_ch
+//    set sample_id, file(reads) from samples_tofilt_ch
 //
 //    output:
 //    file '*_indexes.txt' into index_files
@@ -263,14 +261,14 @@ process runMultiQC {
 //    script:
 //    """
 //	#!/bin/bash
-//	zcat "${reads[0]}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${pairId}_indexes.txt
+//	zcat "${reads[0]}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${sample_id}_indexes.txt
 //	done
 //    """
 //}
 
 // Calculate switch rate
 //process index_calc {
-//    tag { "index_calc_${pairId}" }
+//    tag { "index_calc_${sample_id}" }
 //
 //    input:
 //    file('*_indexes.txt') from index_files.collect()
@@ -339,14 +337,14 @@ process runMultiQC {
  *
  */
 process Nfilter {
-    tag { "nfilter_${pairId}" }
+    tag { "nfilter_${sample_id}" }
 
     input:
-    set pairId, reads from samples_tofilt_ch
+    set sample_id, reads from samples_tofilt_ch
 
     output:
-    set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
-    set val(pairId), "${pairId}.out.RDS" into filt_step3Trimming // needed for join() later
+    set val(sample_id), "${sample_id}.R[12].noN.fastq.gz" optional true into filt_step2
+    set val(sample_id), "${sample_id}.out.RDS" into filt_step3Trimming // needed for join() later
 	file('forward_rc') into forwardP
     file('reverse_rc') into reverseP
 
@@ -362,9 +360,9 @@ process Nfilter {
 
     #Filter out reads with N's
     out1 <- filterAndTrim(fwd = "${reads[0]}",
-                        filt = paste0("${pairId}", ".R1.noN.fastq.gz"),
+                        filt = paste0("${sample_id}", ".R1.noN.fastq.gz"),
                         rev = "${reads[1]}",
-                        filt.rev = paste0("${pairId}", ".R2.noN.fastq.gz"),
+                        filt.rev = paste0("${sample_id}", ".R2.noN.fastq.gz"),
                         maxN = 0,
                         multithread = ${task.cpus})
     FWD.RC <- dada2:::rc("${params.fwdprimer}")
@@ -379,7 +377,7 @@ process Nfilter {
     writeLines(REV.RC, revP)
     close(revP)
     
-    saveRDS(out1, "${pairId}.out.RDS")
+    saveRDS(out1, "${sample_id}.out.RDS")
     """
 }
 
@@ -391,14 +389,14 @@ process Nfilter {
  
 if (params.lengthvar == false) {
 	process cutadapt {
-		tag { "filt_step2_${pairId}" }
+		tag { "filt_step2_${sample_id}" }
 		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
 		input:
-		set pairId, reads from filt_step2
+		set sample_id, reads from filt_step2
 		
 		output:
-		set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into filt_step3
+		set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
 		file "*.cutadapt.out" into cutadaptToMultiQC
 
 		when:
@@ -410,25 +408,25 @@ if (params.lengthvar == false) {
 			-G "${params.revprimer}" \\
 			--cores ${task.cpus} \\
 			-n 2 \\
-			-o "${pairId}.R1.cutadapt.fastq.gz" \\
-			-p "${pairId}.R2.cutadapt.fastq.gz" \\
-			"${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+			-o "${sample_id}.R1.cutadapt.fastq.gz" \\
+			-p "${sample_id}.R2.cutadapt.fastq.gz" \\
+			"${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
 		"""
 	}
 }
 /* Length variable amplicon filtering - Trim both sides*/
 else if (params.lengthvar == true) {
 	process cutadapt_var {
-		tag { "varfilt_step2_${pairId}" }
+		tag { "varfilt_step2_${sample_id}" }
 		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
 		input:
-		set pairId, reads from filt_step2
+		set sample_id, reads from filt_step2
 		file(forP) from forwardP
 		file(revP) from reverseP
 		
 		output:
-		set val(pairId), "${pairId}.R[12].cutadapt.fastq.gz" optional true into filt_step3
+		set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
 		file "*.cutadapt.out" into cutadaptToMultiQC
 
 		when:
@@ -443,9 +441,9 @@ else if (params.lengthvar == true) {
 			-G "${params.revprimer}" -A \$REV_PRIMER \\
 			--cores ${task.cpus} \\
 			-n 2 \\
-			-o "${pairId}.R1.cutadapt.fastq.gz" \\
-			-p "${pairId}.R2.cutadapt.fastq.gz" \\
-			"${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+			-o "${sample_id}.R1.cutadapt.fastq.gz" \\
+			-p "${sample_id}.R2.cutadapt.fastq.gz" \\
+			"${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
 		"""
 	}    
 } else {
@@ -462,14 +460,14 @@ else if (params.lengthvar == true) {
  */
  
 process FilterAndTrim {
-    tag { "filt_step3_${pairId}" }
+    tag { "filt_step3_${sample_id}" }
     publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
     input:
-    set pairId, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
+    set sample_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
 
     output:
-    set val(pairId), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
+    set val(sample_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
     file "*.R1.filtered.fastq.gz" optional true into forReads
     file "*.R2.filtered.fastq.gz" optional true into revReads
     file "*.trimmed.txt" into trimTracking
@@ -485,10 +483,10 @@ process FilterAndTrim {
 	library(Biostrings); packageVersion("Biostrings")
 
     out1 <- readRDS("${trimming}")
-    out2 <- filterAndTrim(fwd = paste0("${pairId}",".R1.cutadapt.fastq.gz"),
-                        filt = paste0("${pairId}", ".R1.filtered.fastq.gz"),
-                        rev = paste0("${pairId}",".R2.cutadapt.fastq.gz"),
-                        filt.rev = paste0("${pairId}", ".R2.filtered.fastq.gz"),
+    out2 <- filterAndTrim(fwd = paste0("${sample_id}",".R1.cutadapt.fastq.gz"),
+                        filt = paste0("${sample_id}", ".R1.filtered.fastq.gz"),
+                        rev = paste0("${sample_id}",".R2.cutadapt.fastq.gz"),
+                        filt.rev = paste0("${sample_id}", ".R2.filtered.fastq.gz"),
                         maxEE = c(${params.maxEEFor},${params.maxEERev}),
                         truncLen = c(${params.truncFor},${params.truncRev}),
                         truncQ = ${params.truncQ},
@@ -502,7 +500,7 @@ process FilterAndTrim {
     #Change input read counts to actual raw read counts
     out3 <- cbind(out1, out2)
     colnames(out3) <- c('input', 'filterN', 'cutadapt', 'filtered')
-    write.csv(out3, paste0("${pairId}", ".trimmed.txt"))
+    write.csv(out3, paste0("${sample_id}", ".trimmed.txt"))
     """
 }
 
@@ -514,11 +512,11 @@ process FilterAndTrim {
  */
 
 process runFastQC_postfilterandtrim {
-    tag { "rFQC_post_FT.${pairId}" }
+    tag { "rFQC_post_FT.${sample_id}" }
     publishDir "${params.outdir}/FastQC-Post-FilterTrim", mode: "copy", overwrite: true
 
     input:
-    set val(pairId), file(filtFor), file(filtRev) from filteredReadsforQC
+    set val(sample_id), file(filtFor), file(filtRev) from filteredReadsforQC
 
     output:
     file '*_fastqc.{zip,html}' into fastqc_files_post
@@ -727,7 +725,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         publishDir "${params.outdir}/dada2-Derep", mode: "copy", overwrite: true
 
         input:
-        set val(pairId), file(filtFor), file(filtRev) from filteredReads
+        set val(sample_id), file(filtFor), file(filtRev) from filteredReads
         file errFor from errorsFor
         file errRev from errorsRev
 
@@ -749,7 +747,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         errF <- readRDS("${errFor}")
         errR <- readRDS("${errRev}")
-        cat("Processing:", "${pairId}", "\\n")
+        cat("Processing:", "${sample_id}", "\\n")
 		
         filtFs <- "${filtFor}"
         filtRs <- "${filtRev}"
@@ -765,7 +763,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
             justConcatenate=as.logical("${params.justConcatenate}")
             )
 
-        saveRDS(merger, paste("${pairId}", "merged", "RDS", sep="."))
+        saveRDS(merger, paste("${sample_id}", "merged", "RDS", sep="."))
 
         saveRDS(ddFs, "all.ddF.RDS")
         saveRDS(derepFs, "all.derepFs.RDS")
