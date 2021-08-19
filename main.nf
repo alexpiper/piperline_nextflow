@@ -374,26 +374,39 @@ process Nfilter {
     library(dada2); packageVersion("dada2")
     library(ShortRead); packageVersion("ShortRead")
     library(Biostrings); packageVersion("Biostrings")
-
-    #Filter out reads with N's
+	library(stringr); packageVersion("stringr")
+	
+	#Filter out reads with N's
     out1 <- filterAndTrim(fwd = "${reads[0]}",
                         filt = paste0("${sample_id}", ".R1.noN.fastq.gz"),
                         rev = "${reads[1]}",
                         filt.rev = paste0("${sample_id}", ".R2.noN.fastq.gz"),
                         maxN = 0,
                         multithread = ${task.cpus})
-    FWD.RC <- dada2:::rc("${params.fwdprimer}")
-    REV.RC <- dada2:::rc("${params.revprimer}")
+						
+	# Write out fasta of primers - Handles multiple primers
+	Fprimer_name <- unlist(stringr::str_split("${params.Fprimer_name}", ";"))
+	Rprimer_name <- unlist(stringr::str_split("${params.Rprimer_name}", ";"))
 	
-	# Write out reverse complements of primers
-    forP <- file("forward_rc")
-    writeLines(FWD.RC, forP)
-    close(forP)
+	Fprimers <- unlist(stringr::str_split("${params.fwdprimer}", ";"))
+	names(Fprimers) <- Fprimer_name
+	Rprimers <- unlist(stringr::str_split("${params.revprimer}", ";"))
+	names(Rprimers) <- Rprimer_name
+	
+	Biostrings::writeXStringSet(Biostrings::DNAStringSet(Fprimers, "forwardP.fa"))
+	Biostrings::writeXStringSet(Biostrings::DNAStringSet(Rprimers, "reverseP.fa"))
+	
+	# Write out fasta of reverse complement primers
+	# Used for checking for read-through into the other end of molecule for variable length markers
+	fwd_rc <- sapply(Fprimers, dada2:::rc)
+	names(fwd_rc) <- Fprimer_name
 
-    revP <- file("reverse_rc")
-    writeLines(REV.RC, revP)
-    close(revP)
-    
+	rev_rc <- sapply(Rprimers, dada2:::rc)
+	names(rev_rc) <- Rprimer_name
+	
+	Biostrings::writeXStringSet(Biostrings::DNAStringSet(fwd_rc, "forwardP_rc.fa"))
+	Biostrings::writeXStringSet(Biostrings::DNAStringSet(rev_rc, "reverseP_rc.fa"))
+	
     saveRDS(out1, "${sample_id}.out.RDS")
     """
 }
@@ -421,12 +434,14 @@ if (params.lengthvar == false) {
 
 		script:
 		"""
-		cutadapt -g "${params.fwdprimer}" \\
-			-G "${params.revprimer}" \\
-			--cores ${task.cpus} \\
+		cutadapt \\
+			-g file:forwardP.fa \\		
+			-G file:reverseP.fa \\
+			--cores ${task.cpus} \\		
 			-n 2 \\
-			-o "${sample_id}.R1.cutadapt.fastq.gz" \\
-			-p "${sample_id}.R2.cutadapt.fastq.gz" \\
+			--no-indels \\
+			-o "${sample_id}.{name}.R1.cutadapt.fastq.gz" \\
+			-p "${sample_id}.{name}.R2.cutadapt.fastq.gz" \\
 			"${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
 		"""
 	}
@@ -451,15 +466,14 @@ else if (params.lengthvar == true) {
 
 		script:
 		"""
-		FWD_PRIMER=\$(<forward_rc)
-		REV_PRIMER=\$(<reverse_rc)
-		
-		cutadapt -g "${params.fwdprimer}" -a \$FWD_PRIMER \\
-			-G "${params.revprimer}" -A \$REV_PRIMER \\
-			--cores ${task.cpus} \\
+		cutadapt \\
+			-g file:forwardP.fa -a file:reverseP_rc.fa \\		
+			-G file:reverseP.fa -a file:forwardP_rc.fa\\
+			--cores ${task.cpus} \\		
 			-n 2 \\
-			-o "${sample_id}.R1.cutadapt.fastq.gz" \\
-			-p "${sample_id}.R2.cutadapt.fastq.gz" \\
+			--no-indels \\
+			-o "${sample_id}.{name}.R1.cutadapt.fastq.gz" \\
+			-p "${sample_id}.{name}.R2.cutadapt.fastq.gz" \\
 			"${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
 		"""
 	}    
