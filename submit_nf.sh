@@ -35,12 +35,26 @@ module load Java/12.0.1
 
 # Run RDP ITS
 
-# DAta from: https://www.ebi.ac.uk/ena/browser/view/PRJNA377530?show=reads
+# Data from: https://www.ebi.ac.uk/ena/browser/view/PRJNA377530?show=reads
 cd /group/pathogens/Alexp/Metabarcoding/test/ITS
 nextflow pull alexpiper/piperline
 nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --lengthvar false \
 --fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \
 -profile basc -r main
+
+
+# Run COI data
+
+# Data from /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3
+cp /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3/* /group/pathogens/Alexp/Metabarcoding/test/COI
+
+cd /group/pathogens/Alexp/Metabarcoding/test/COI
+nextflow pull alexpiper/piperline
+nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
+--fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --reference 'idtaxa_bftrimmed.rds' \
+-profile basc -r main
+
+
 
 # Test with lenthvar false
 

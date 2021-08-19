@@ -64,6 +64,7 @@ def helpMessage() {
       --idType                      The ASV IDs are renamed to simplify downstream analysis, in particular with downstream tools.  The
                                     default is "ASV", which simply renames the sequences in sequencial order.  Alternatively, this can be
                                     set to "md5" which will run MD5 on the sequence and generate a QIIME2-like unique hash.
+	  --subsample					subsample a random 1000 reads to speed up process of testing
 
     Help:
       --help                        Will print out summary above when executing nextflow run uct-cbio/piperline
@@ -173,6 +174,30 @@ if(params.email) {
 }
 log.info summary.collect { k,v -> "${k.padRight(15)}: $v" }.join("\n")
 log.info "========================================="
+
+/*
+ *
+ * Step 0: Subsample for testing
+ *
+ */
+
+if (params.subsample == true) {
+	process subsample {
+		tag { "subsample.${pairId}" }
+		publishDir "${params.outdir}/subsampled", mode: "copy", overwrite: true
+
+		input:
+		set pairId, file(in_fastq) from dada2ReadPairs
+
+		output:
+		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairs
+
+		"""
+		seqtk ${in_fastq.get(0)} -s100 read1.fq 10000 > ${pairId}.R[12].sub.fastq.gz
+		seqtk ${in_fastq.get(1)} -s100 read2.fq 10000 > ${pairId}.R[12].sub.fastq.gz
+		"""
+	}
+}
 
 /*
  *
