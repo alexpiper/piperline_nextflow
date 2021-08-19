@@ -221,7 +221,7 @@ process runFastQC {
     file '*_fastqc.{zip,html}' into fastqc_files,fastqc_files2
 
     """
-    fastqc --nogroup -q ${in_fastq.get(0)} ${in_fastq.get(1)}
+    fastqc --nogroup -q "${reads[0]}" "${reads[1]}"
     """
 }
 
