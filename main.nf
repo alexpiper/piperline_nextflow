@@ -189,8 +189,8 @@ if (params.subsample == true) {
 		tuple sample_id, file(reads) from samples_ch
 
 		output:
-    	file("subsampled/*_R[12]_001.fastq.gz") into samples_toqual_ch
-		tuple sample_id, file("subsampled/${sample_id}_R[12]_001.fastq.gz") into samples_tofilt_ch
+		tuple sample_id, file("subsampled/${sample_id}_R1_001.fastq.gz"), file("subsampled/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
+		tuple sample_id, file("subsampled/*R[12]_001.fastq.gz") into samples_tofilt_ch
 
 		"""
 		#!/bin/bash
@@ -213,23 +213,24 @@ if (params.subsample == true) {
 
 process runFastQC {
     tag { "rFQC.${sample_id}" }
-    publishDir "${params.outdir}/FASTQC-Raw", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/FASTQC-prefilter", mode: "copy", overwrite: true
 
     input:
-    file(in_fastq) from samples_toqual_ch.collect()
+    tuple sample_id, file(For), file(Rev) from samples_toqual_ch
 
     output:
-    file '*_fastqc.{zip,html}' into fastqc_files_ch,fastqc_files2_ch
+    file '*_fastqc.{zip,html}' into fastqc_files_ch, fastqc_files2_ch
 
     """
-    fastqc --nogroup -q ${in_fastq.get(0)} ${in_fastq.get(1)}
+    fastqc --nogroup -q ${For} ${Rev}
     """
 }
+
 
 // TODO: combine MultiQC reports and split by directory (no need for two)
 process runMultiQC {
     tag { "runMultiQC" }
-    publishDir "${params.outdir}/MultiQC-Raw", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/MultiQC-prefilter", mode: 'copy', overwrite: true
 
     input:
     file('./raw-seq/*') from fastqc_files_ch.collect()
@@ -513,7 +514,7 @@ process FilterAndTrim {
 
 process runFastQC_postfilterandtrim {
     tag { "rFQC_post_FT.${sample_id}" }
-    publishDir "${params.outdir}/FastQC-Post-FilterTrim", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/FastQC-postfilter", mode: "copy", overwrite: true
 
     input:
     set val(sample_id), file(filtFor), file(filtRev) from filteredReadsforQC
@@ -531,7 +532,7 @@ process runFastQC_postfilterandtrim {
 
 process runMultiQC_postfilterandtrim {
     tag { "runMultiQC_postfilterandtrim" }
-    publishDir "${params.outdir}/MultiQC-Post-FilterTrim", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/MultiQC-postfilter", mode: 'copy', overwrite: true
 
     input:
     file('./raw-seq/*') from fastqc_files2_ch.collect()
