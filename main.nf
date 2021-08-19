@@ -187,14 +187,14 @@ if (params.subsample == true) {
 		publishDir "${params.outdir}/subsampled", mode: "copy", overwrite: true
 
 		input:
-		set pairId, file(in_fastq) from dada2ReadPairs
+		set pairId, file(reads) from dada2ReadPairs
 
 		output:
 		set val(pairId), "${pairId}.R[12].sub.fastq.gz" optional true into dada2ReadPairsToFilt, dada2ReadPairsToQual
 		
 		"""
-		seqtk sample -s100 ${in_fastq.get(0)} 10000 > ${pairId}.R[12].sub.fastq.gz
-		seqtk sample -s100 ${in_fastq.get(1)} 10000 > ${pairId}.R[12].sub.fastq.gz
+		seqtk sample -s100 "${reads[0]}" 10000 > ${pairId}.R1.sub.fastq.gz
+		seqtk sample -s100 "${reads[1]}" 10000 > ${pairId}.R2.sub.fastq.gz
 		"""
 	}
 } else {
@@ -214,7 +214,8 @@ process runFastQC {
     publishDir "${params.outdir}/FASTQC-Raw", mode: "copy", overwrite: true
 
     input:
-    set pairId, file(in_fastq) from dada2ReadPairsToQual
+	set pairId, reads from dada2ReadPairsToQual
+    //set pairId, file(in_fastq) from dada2ReadPairsToQual
 
     output:
     file '*_fastqc.{zip,html}' into fastqc_files,fastqc_files2
@@ -339,7 +340,7 @@ process Nfilter {
     tag { "nfilter_${pairId}" }
 
     input:
-    set pairId, file(reads) from dada2ReadPairsToFilt
+    set pairId, reads from dada2ReadPairsToFilt
 
     output:
     set val(pairId), "${pairId}.R[12].noN.fastq.gz" optional true into filt_step2
