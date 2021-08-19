@@ -215,6 +215,92 @@ process runMultiQC {
     """
 }
 
+// Summarise indexes used for each sample
+//process summarise_index {
+//    tag { "summarise_index_${pairId}" }
+//
+//    input:
+//    set pairId, file(reads) from dada2ReadPairs
+//
+//    output:
+//    file '*_indexes.txt' into index_files
+//
+//    when:
+//    params.precheck == false
+//
+//    script:
+//    """
+//	#!/bin/bash
+//	zcat "${reads[0]}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${pairId}_indexes.txt
+//	done
+//    """
+//}
+
+// Calculate switch rate
+//process index_calc {
+//    tag { "index_calc_${pairId}" }
+//
+//    input:
+//    file('*_indexes.txt') from index_files.collect()
+//
+//    output:
+//    file "index_switch_calc.txt" into index_switch
+//
+//    when:
+//    params.precheck == false
+//
+//    script:
+//    """
+//	#!/bin/bash
+//	ls | grep '_indexes.txt' | sort > files
+//	grep -v 'Undetermined' files | xargs cat > determined_counts.txt
+//
+//	# Get all potential switched combinations of used indexes
+//	index1=$(cat determined_counts.txt | cut -d' ' -f 2)
+//	index2=$(cat determined_counts.txt | cut -d' ' -f 3)
+//
+//	[ -e all_combinations.txt ] && rm all_combinations.txt
+//	touch all_combinations.txt
+//	for i in ${index1}
+//	do
+//	  for j in ${index2}
+//	  do
+//		if [ "$i" \< "$j" ]
+//		then
+//		 echo $i $j >> all_combinations.txt
+//		fi
+//	  done
+//	done
+//
+//	# Count number of undetermined reads
+//	grep 'Undetermined' files | xargs cat > undetermined_counts.txt
+//	cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
+//
+//	# Count number of correctly demultiplexed reads
+//	correct_counts=$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
+//
+//	# Count number of switched reads
+//	comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
+//	switched_counts=$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
+//
+//	# Count number of other reads (these can be sequencing errors, PhiX and other junk)
+//	other_counts=$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
+//
+//	# Calculate switch rate (in percentage)
+//	calc(){ awk "BEGIN { print "$*" }"; }
+//	switch_rate=$(calc $switched_counts/$correct_counts)
+//	switch_rate_perc=$(calc $switched_counts/$correct_counts*100)
+//
+//	# Print results to file
+//	touch index_switch_calc.txt
+//	echo "Correctly demultiplexed reads: ${correct_counts}" >> index_switch_calc.txt
+//	echo "Switched reads: ${switched_counts}" >> index_switch_calc.txt
+//	echo "Other undetermined reads: ${other_counts}" >> index_switch_calc.txt
+//	echo "Index switching rate: ${switch_rate} (${switch_rate_perc}%)" >> index_switch_calc.txt
+//    """
+//}
+
+
 /*
  *
  * Step 2: Filter N bases
@@ -486,8 +572,7 @@ process LearnErrors {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2);
-    packageVersion("dada2")
+    library(dada2); packageVersion("dada2")    
     setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
 
     # File parsing
@@ -555,8 +640,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         """
 		#!/usr/bin/env Rscript
-        library(dada2)
-        packageVersion("dada2")
+        library(dada2); packageVersion("dada2")
         setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
 		filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
 		filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
@@ -628,8 +712,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         """
         #!/usr/bin/env Rscript
-        library(dada2)
-        packageVersion("dada2")
+        library(dada2); packageVersion("dada2")        
         setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
 
         errF <- readRDS("${errFor}")
@@ -707,8 +790,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         '''
         #!/usr/bin/env Rscript
-        library(dada2)
-        packageVersion("dada2")
+        library(dada2); packageVersion("dada2")        
         
         mergerFiles <- list.files(path = '.', pattern = '.*.RDS$')
         pairIds <- sub('.merged.RDS', '', mergerFiles)
@@ -748,8 +830,7 @@ if (!params.skipChimeraDetection) {
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
         """
         #!/usr/bin/env Rscript
-        library(dada2)
-        packageVersion("dada2")
+        library(dada2); packageVersion("dada2")        
 
         st.all <- readRDS("${st}")
 
@@ -804,8 +885,7 @@ if (params.reference) {
                 script:
                 """
                 #!/usr/bin/env Rscript
-                library(dada2)
-                packageVersion("dada2")
+                library(dada2); packageVersion("dada2")                
 
                 seqtab <- readRDS("${st}")
 
@@ -851,9 +931,8 @@ if (params.reference) {
                 taxLevels = params.taxLevels ? "c( ${params.taxLevels} )," : ''
                 """
                 #!/usr/bin/env Rscript
-                library(dada2)
-                packageVersion("dada2")
-
+                library(dada2); packageVersion("dada2")
+                
                 seqtab <- readRDS("${st}")
 
                 # Assign taxonomy
@@ -891,9 +970,9 @@ if (params.reference) {
             script:
             """
             #!/usr/bin/env Rscript
-            library(dada2)
-            library(DECIPHER)
-            packageVersion("DECIPHER")
+            library(dada2); packageVersion("dada2")
+            library(DECIPHER); packageVersion("DECIPHER")
+			library(stringr); packageVersion("stringr")
 
             seqtab <- readRDS("${st}")
 
@@ -901,7 +980,11 @@ if (params.reference) {
             dna <- DNAStringSet(getSequences(seqtab))
 
             # load database; this should be a RData file
-            load("${refFile}")
+			if (stringr::str_detect("${refFile}", ".RData)){
+				load("${refFile}")
+			} else if(stringr::str_detect("${refFile}", ".rds)){
+				trainingSet <- readRDS("${refFile}")
+			}
 
             ids <- IdTaxa(dna, trainingSet,
                 strand="both",
@@ -984,9 +1067,9 @@ process RenameASVs {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2)
-    library(ShortRead)
-    library(digest)
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
+    library(digest); packageVersion("digest")
 
     # read RDS w/ data
     st <- readRDS("${st}")
@@ -1037,8 +1120,8 @@ process GenerateSeqTables {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2)
-    library(ShortRead)
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
 
     seqtab <- readRDS("${st}")
 
@@ -1097,8 +1180,8 @@ process GenerateTaxTables {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2)
-    library(ShortRead)
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
 
     tax <- readRDS("${tax}")
     map <- readRDS("${map}")
@@ -1174,8 +1257,8 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
             script:
             """
             #!/usr/bin/env Rscript
-            library(dada2)
-            library(DECIPHER)
+            library(dada2); packageVersion("dada2")
+            library(DECIPHER); packageVersion("DECIPHER")
 
             seqs <- readDNAStringSet("${seqs}")
             alignment <- AlignSeqs(seqs,
@@ -1211,7 +1294,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
             script:
             """
             #!/usr/bin/env Rscript
-            library(phangorn)
+            library(phangorn); packageVersion("phangorn")
 
             phang.align <- read.phyDat("aligned_seqs.fasta",
                                         format = "fasta",
@@ -1270,8 +1353,8 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
         script:
         """
         #!/usr/bin/env Rscript
-        library(phangorn)
-        library(ape)
+        library(phangorn); packageVersion("phangorn")
+        library(ape); packageVersion("ape")
 
         tree <- read.tree(file = "${tree}")
 
@@ -1315,9 +1398,8 @@ process ReadTracking {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2)
-    packageVersion("dada2")
-    library(dplyr)
+    library(dada2); packageVersion("dada2")
+    library(dplyr); packageVersion("dplyr")
 
     getN <- function(x) sum(getUniques(x))
 

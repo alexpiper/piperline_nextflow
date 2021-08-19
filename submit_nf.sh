@@ -38,7 +38,7 @@ module load Java/12.0.1
 # DAta from: https://www.ebi.ac.uk/ena/browser/view/PRJNA377530?show=reads
 cd /group/pathogens/Alexp/Metabarcoding/test/ITS
 nextflow pull alexpiper/piperline
-nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --lengthvar true \
+nextflow run alexpiper/piperline --reads '*_{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --lengthvar false \
 --fwdprimer 'ACCTGCGGARGGATCA' --revprimer 'GAGATCCRTTGYTRAAAGTT' --reference 'Fungal_LSU_v11_March2018.RData' \
 -profile basc -r main
 
