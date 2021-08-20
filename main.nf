@@ -440,7 +440,8 @@ if (params.lengthvar == false) {
         script:
         """
         #!/bin/bash
-        if [ $(cat forwardP.fa | wc -l)\> 3 ];
+        
+        if [ ! -z "${demux}" ];
         then
         echo "More than one primer detected, demultiplexing (single core)";
         cutadapt \\
@@ -490,7 +491,8 @@ else if (params.lengthvar == true) {
         script:
         """
         #!/bin/bash
-        if [ $(cat forwardP.fa | wc -l) \> 3 ];
+        
+        if [ ! -z "${demux}" ];
         then
         echo "More than one primer detected, demultiplexing (single-core)";
         cutadapt \\
@@ -505,8 +507,8 @@ else if (params.lengthvar == true) {
 
         else
         echo "Single primer detected (multi-core)";
-        fwd_rc=$(cat forwardP_rc.fa | tail -1)
-        rev_rc=$(cat reverseP_rc.fa | tail -1)
+        fwd_rc=\$(cat forwardP_rc.fa | tail -1)
+        rev_rc=\$(cat reverseP_rc.fa | tail -1)
         
         cutadapt \\
             -g "${params.fwdprimer}" -a ${rev_rc}\\
