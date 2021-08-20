@@ -2,7 +2,7 @@
 
 /*
 ========================================================================================
-					P I P E R L I N E
+                    P I P E R L I N E
 ========================================================================================
  DADA2 NEXTFLOW PIPELINE FOR BIOSECURITY METABARCODING
 
@@ -64,7 +64,7 @@ def helpMessage() {
       --idType                      The ASV IDs are renamed to simplify downstream analysis, in particular with downstream tools.  The
                                     default is "ASV", which simply renames the sequences in sequencial order.  Alternatively, this can be
                                     set to "md5" which will run MD5 on the sequence and generate a QIIME2-like unique hash.
-	  --subsample					subsample a random 10,000 reads to speed up process of testing
+      --subsample                   subsample a random 10,000 reads to speed up process of testing
 
     Help:
       --help                        Will print out summary above when executing nextflow run alexpiper/piperline
@@ -184,41 +184,41 @@ log.info "========================================="
  */
 
 if (params.subsample == true) {
-	process setup_subsample {
-		tag { "subsample.${sample_id}" }
+    process setup_subsample {
+        tag { "subsample.${sample_id}" }
 
-		input:
-		tuple sample_id, file(reads) from samples_ch
+        input:
+        tuple sample_id, file(reads) from samples_ch
 
-		output:
-		tuple sample_id, file("data/${sample_id}_R1_001.fastq.gz"), file("data/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
-		tuple sample_id, file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
+        output:
+        tuple sample_id, file("data/${sample_id}_R1_001.fastq.gz"), file("data/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
+        tuple sample_id, file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
 
-		"""
-		#!/bin/bash
-		mkdir data
-		seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > data/${sample_id}_R1_001.fastq.gz
-		seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > data/${sample_id}_R2_001.fastq.gz
-		"""
-	}
+        """
+        #!/bin/bash
+        mkdir data
+        seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > data/${sample_id}_R1_001.fastq.gz
+        seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > data/${sample_id}_R2_001.fastq.gz
+        """
+    }
 } else if (params.subsample == false){
-	process setup {
-		tag { "setup.${sample_id}" }
+    process setup {
+        tag { "setup.${sample_id}" }
 
-		input:
-		tuple sample_id, file(reads) from samples_ch
+        input:
+        tuple sample_id, file(reads) from samples_ch
 
-		output:
-		tuple sample_id, file("data/${sample_id}_R1_001.fastq.gz"), file("data/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
-		tuple sample_id, file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
+        output:
+        tuple sample_id, file("data/${sample_id}_R1_001.fastq.gz"), file("data/${sample_id}_R2_001.fastq.gz") into samples_toqual_ch
+        tuple sample_id, file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
 
-		"""
-		#!/bin/bash
-		mkdir data
-		cp ${reads[0]} data/${sample_id}_R1_001.fastq.gz
-		cp ${reads[1]} data/${sample_id}_R2_001.fastq.gz
-		"""
-	}
+        """
+        #!/bin/bash
+        mkdir data
+        cp ${reads[0]} data/${sample_id}_R1_001.fastq.gz
+        cp ${reads[1]} data/${sample_id}_R2_001.fastq.gz
+        """
+    }
 }
 
 /*
@@ -277,9 +277,9 @@ process runMultiQC {
 //
 //    script:
 //    """
-//	#!/bin/bash
-//	zcat "${reads[0]}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${sample_id}_indexes.txt
-//	done
+//  #!/bin/bash
+//  zcat "${reads[0]}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${sample_id}_indexes.txt
+//  done
 //    """
 //}
 
@@ -298,52 +298,52 @@ process runMultiQC {
 //
 //    script:
 //    """
-//	#!/bin/bash
-//	ls | grep '_indexes.txt' | sort > files
-//	grep -v 'Undetermined' files | xargs cat > determined_counts.txt
+//  #!/bin/bash
+//  ls | grep '_indexes.txt' | sort > files
+//  grep -v 'Undetermined' files | xargs cat > determined_counts.txt
 //
-//	# Get all potential switched combinations of used indexes
-//	index1=$(cat determined_counts.txt | cut -d' ' -f 2)
-//	index2=$(cat determined_counts.txt | cut -d' ' -f 3)
+//  # Get all potential switched combinations of used indexes
+//  index1=$(cat determined_counts.txt | cut -d' ' -f 2)
+//  index2=$(cat determined_counts.txt | cut -d' ' -f 3)
 //
-//	[ -e all_combinations.txt ] && rm all_combinations.txt
-//	touch all_combinations.txt
-//	for i in ${index1}
-//	do
-//	  for j in ${index2}
-//	  do
-//		if [ "$i" \< "$j" ]
-//		then
-//		 echo $i $j >> all_combinations.txt
-//		fi
-//	  done
-//	done
+//  [ -e all_combinations.txt ] && rm all_combinations.txt
+//  touch all_combinations.txt
+//  for i in ${index1}
+//  do
+//    for j in ${index2}
+//    do
+//      if [ "$i" \< "$j" ]
+//      then
+//       echo $i $j >> all_combinations.txt
+//      fi
+//    done
+//  done
 //
-//	# Count number of undetermined reads
-//	grep 'Undetermined' files | xargs cat > undetermined_counts.txt
-//	cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
+//  # Count number of undetermined reads
+//  grep 'Undetermined' files | xargs cat > undetermined_counts.txt
+//  cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
 //
-//	# Count number of correctly demultiplexed reads
-//	correct_counts=$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
+//  # Count number of correctly demultiplexed reads
+//  correct_counts=$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
 //
-//	# Count number of switched reads
-//	comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
-//	switched_counts=$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
+//  # Count number of switched reads
+//  comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
+//  switched_counts=$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
 //
-//	# Count number of other reads (these can be sequencing errors, PhiX and other junk)
-//	other_counts=$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
+//  # Count number of other reads (these can be sequencing errors, PhiX and other junk)
+//  other_counts=$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
 //
-//	# Calculate switch rate (in percentage)
-//	calc(){ awk "BEGIN { print "$*" }"; }
-//	switch_rate=$(calc $switched_counts/$correct_counts)
-//	switch_rate_perc=$(calc $switched_counts/$correct_counts*100)
+//  # Calculate switch rate (in percentage)
+//  calc(){ awk "BEGIN { print "$*" }"; }
+//  switch_rate=$(calc $switched_counts/$correct_counts)
+//  switch_rate_perc=$(calc $switched_counts/$correct_counts*100)
 //
-//	# Print results to file
-//	touch index_switch_calc.txt
-//	echo "Correctly demultiplexed reads: ${correct_counts}" >> index_switch_calc.txt
-//	echo "Switched reads: ${switched_counts}" >> index_switch_calc.txt
-//	echo "Other undetermined reads: ${other_counts}" >> index_switch_calc.txt
-//	echo "Index switching rate: ${switch_rate} (${switch_rate_perc}%)" >> index_switch_calc.txt
+//  # Print results to file
+//  touch index_switch_calc.txt
+//  echo "Correctly demultiplexed reads: ${correct_counts}" >> index_switch_calc.txt
+//  echo "Switched reads: ${switched_counts}" >> index_switch_calc.txt
+//  echo "Other undetermined reads: ${other_counts}" >> index_switch_calc.txt
+//  echo "Index switching rate: ${switch_rate} (${switch_rate_perc}%)" >> index_switch_calc.txt
 //    """
 //}
 
@@ -362,7 +362,10 @@ process Nfilter {
     output:
     set val(sample_id), "${sample_id}.R[12].noN.fastq.gz" optional true into filt_step2
     set val(sample_id), "${sample_id}.out.RDS" into filt_step3Trimming // needed for join() later
-	file('forwardP.fa'), file('reverseP.fa'), file('forwardP_rc.fa'), file('reverseP_rc.fa') into primers
+    file "forwardP.fa" into forprimers
+    file "reverseP.fa" into revprimers
+    file "forwardP_rc.fa" into rcfor
+    file "reverseP_rc.fa" into rcrev
 
     when:
     params.precheck == false
@@ -373,116 +376,156 @@ process Nfilter {
     library(dada2); packageVersion("dada2")
     library(ShortRead); packageVersion("ShortRead")
     library(Biostrings); packageVersion("Biostrings")
-	library(stringr); packageVersion("stringr")
-	
-	#Filter out reads with N's
+    library(stringr); packageVersion("stringr")
+    
+    #Filter out reads with N's
     out1 <- filterAndTrim(fwd = "${reads[0]}",
                         filt = paste0("${sample_id}", ".R1.noN.fastq.gz"),
                         rev = "${reads[1]}",
                         filt.rev = paste0("${sample_id}", ".R2.noN.fastq.gz"),
                         maxN = 0,
                         multithread = ${task.cpus})
-						
-	# Write out fasta of primers - Handles multiple primers
-	Fprimer_name <- unlist(stringr::str_split("${params.fwdprimer_name}", ";"))
-	Rprimer_name <- unlist(stringr::str_split("${params.revprimer_name}", ";"))
-	
-	Fprimers <- unlist(stringr::str_split("${params.fwdprimer}", ";"))
-	names(Fprimers) <- Fprimer_name
-	Rprimers <- unlist(stringr::str_split("${params.revprimer}", ";"))
-	names(Rprimers) <- Rprimer_name
-	
-		Biostrings::writeXStringSet(Biostrings::DNAStringSet(Fprimers), "forwardP.fa")
-		Biostrings::writeXStringSet(Biostrings::DNAStringSet(Rprimers), "reverseP.fa")
-		
-		# Write out fasta of reverse complement primers
-		# Used for checking for read-through into the other end of molecule for variable length markers
-		fwd_rc <- sapply(Fprimers, dada2:::rc)
-		names(fwd_rc) <- Fprimer_name
+                        
+    # Write out fasta of primers - Handles multiple primers
+    Fprimer_name <- unlist(stringr::str_split("${params.fwdprimer_name}", ";"))
+    Rprimer_name <- unlist(stringr::str_split("${params.revprimer_name}", ";"))
+    
+    Fprimers <- unlist(stringr::str_split("${params.fwdprimer}", ";"))
+    names(Fprimers) <- Fprimer_name
+    Rprimers <- unlist(stringr::str_split("${params.revprimer}", ";"))
+    names(Rprimers) <- Rprimer_name
+    
+    Biostrings::writeXStringSet(Biostrings::DNAStringSet(Fprimers), "forwardP.fa")
+    Biostrings::writeXStringSet(Biostrings::DNAStringSet(Rprimers), "reverseP.fa")
+    
+    # Write out fasta of reverse complement primers
+    # Used for checking for read-through into the other end of molecule for variable length markers
+    fwd_rc <- sapply(Fprimers, dada2:::rc)
+    names(fwd_rc) <- Fprimer_name
 
-		rev_rc <- sapply(Rprimers, dada2:::rc)
-		names(rev_rc) <- Rprimer_name
-		
-		Biostrings::writeXStringSet(Biostrings::DNAStringSet(fwd_rc), "forwardP_rc.fa")
-		Biostrings::writeXStringSet(Biostrings::DNAStringSet(rev_rc), "reverseP_rc.fa")
-		
+    rev_rc <- sapply(Rprimers, dada2:::rc)
+    names(rev_rc) <- Rprimer_name
+    
+    Biostrings::writeXStringSet(Biostrings::DNAStringSet(fwd_rc), "forwardP_rc.fa")
+    Biostrings::writeXStringSet(Biostrings::DNAStringSet(rev_rc), "reverseP_rc.fa")
+        
     saveRDS(out1, "${sample_id}.out.RDS")
     """
 }
 
 /*
  *
- * Step 3: Remove primers with cutadapt
+ * Step 3: Remove primers with bbmap
  *
  */
  
+// TODO: Add lengthvar demulti because cores isnt supported when demultiplexing-cores ${task.cpus} \\
 if (params.lengthvar == false) {
-	process cutadapt {
-		tag { "filt_step2_${sample_id}" }
-		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+    process cutadapt {
+        tag { "filt_step2_${sample_id}" }
+        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
-		input:
-		set sample_id, reads from filt_step2
-		file('forwardP.fa'), file('reverseP.fa') from primers
-		
-		output:
-		set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
-		file "*.cutadapt.out" into cutadaptToMultiQC
+        input:
+        set sample_id, reads from filt_step2
+        file("forwardP.fa") from forprimers
+        file("reverseP.fa") from revprimers
+        
+        output:
+        set val(sample_id), "${sample_id}.*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        file "*.cutadapt.out" into cutadaptToMultiQC
 
-		when:
-		params.precheck == false
+        when:
+        params.precheck == false
 
-		script:
-		"""
-		cutadapt \\
-			-g file:forwardP.fa \\		
-			-G file:reverseP.fa \\
-			--cores ${task.cpus} \\		
-			-n 2 \\
-			--no-indels \\
-			-o "${sample_id}.{name}.R1.cutadapt.fastq.gz" \\
-			-p "${sample_id}.{name}.R2.cutadapt.fastq.gz" \\
-			"${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
-		"""
-	}
+        script:
+        """
+        #!/bin/bash
+        if [ $(cat forwardP.fa | wc -l)\> 3 ];
+        then
+        echo "More than one primer detected, demultiplexing (single core)";
+        cutadapt \\
+            -g file:forwardP.fa \\
+            -G file:reverseP.fa \\
+            -n 2 \\
+            --no-indels \\
+            -o "${sample_id}.{name}.R1.cutadapt.fastq.gz" \\
+            -p "${sample_id}.{name}.R2.cutadapt.fastq.gz" \\
+            "${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"           
+
+        else
+        echo "Single primer detected (multi-core)";
+        cutadapt \\
+            -g "${params.fwdprimer}" \\
+            -G "${params.revprimer}" \\
+            --cores ${task.cpus} \\
+            -n 2 \\
+            -o "${pairId}.R1.cutadapt.fastq.gz" \\
+            -p "${pairId}.R2.cutadapt.fastq.gz" \\
+            "${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+        fi;
+        """
+    }
 }
 /* Length variable amplicon filtering - Trim both sides*/
 else if (params.lengthvar == true) {
-	//TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
-	process cutadapt_var {
-		tag { "varfilt_step2_${sample_id}" }
-		publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+    //TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
+    process cutadapt_var {
+        tag { "varfilt_step2_${sample_id}" }
+        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
-		input:
-		set sample_id, reads from filt_step2
-		file('forwardP.fa'), file('reverseP.fa'), file('forwardP_rc.fa'), file('reverseP_rc.fa') from primers
-		
-		output:
-		set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
-		file "*.cutadapt.out" into cutadaptToMultiQC
+        input:
+        set sample_id, reads from filt_step2
+        file("forwardP.fa") from forprimers
+        file("reverseP.fa") from revprimers
+        file("forwardP_rc.fa") from rcfor
+        file("reverseP_rc.fa") from rcrev
+        
+        output:
+        set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        file "*.cutadapt.out" into cutadaptToMultiQC
 
-		when:
-		params.precheck == false
+        when:
+        params.precheck == false
 
-		script:
-		"""
-		cutadapt \\
-			-g file:forwardP.fa -a file:reverseP_rc.fa \\		
-			-G file:reverseP.fa -a file:forwardP_rc.fa\\
-			--cores ${task.cpus} \\		
-			-n 2 \\
-			--no-indels \\
-			-o "${sample_id}.{name}.R1.cutadapt.fastq.gz" \\
-			-p "${sample_id}.{name}.R2.cutadapt.fastq.gz" \\
-			"${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
-		"""
-	}    
+        script:
+        """
+        #!/bin/bash
+        if [ $(cat forwardP.fa | wc -l) \> 3 ];
+        then
+        echo "More than one primer detected, demultiplexing (single-core)";
+        cutadapt \\
+            -g file:forwardP.fa -a file:reverseP_rc.fa \\
+            -G file:reverseP.fa -a file:forwardP_rc.fa\\
+            --cores ${task.cpus} \\
+            -n 2 \\
+            --no-indels \\
+            -o "${sample_id}.{name}.R1.cutadapt.fastq.gz" \\
+            -p "${sample_id}.{name}.R2.cutadapt.fastq.gz" \\
+            "${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"       
+
+        else
+        echo "Single primer detected (multi-core)";
+        fwd_rc=$(cat forwardP_rc.fa | tail -1)
+        rev_rc=$(cat reverseP_rc.fa | tail -1)
+        
+        cutadapt \\
+            -g "${params.fwdprimer}" -a ${rev_rc}\\
+            -G "${params.revprimer}" -A ${fwd_rc}\\
+            --cores ${task.cpus} \\
+            -n 2 \\
+            -o "${pairId}.R1.cutadapt.fastq.gz" \\
+            -p "${pairId}.R2.cutadapt.fastq.gz" \\
+            "${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+        fi;
+        """
+    }    
 } else {
     // We need to shut this down!
     cutadaptToMultiQC = Channel.empty()
     filteredReads = Channel.empty()
     filteredReadsforQC = Channel.empty()
 }
+
 
 /*
  *
@@ -508,16 +551,22 @@ process FilterAndTrim {
 
     script:
     """
-	#!/usr/bin/env Rscript
-	library(dada2); packageVersion("dada2")
-	library(ShortRead); packageVersion("ShortRead")
-	library(Biostrings); packageVersion("Biostrings")
+    #!/usr/bin/env Rscript
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
+    library(Biostrings); packageVersion("Biostrings")
+    library(stringr); packageVersion("stringr")
+    
+    fastqFs <- sort(list.files(pattern="*.R1.cutadapt.fastq.gz"))
+    fastqFs <- fastqFs[!stringr::str_detect(fastqFs, "unknown")]
+    fastqRs <- sort(list.files(pattern="*.R2.cutadapt.fastq.gz"))
+    fastqRs <- fastqRs[!stringr::str_detect(fastqRs, "unknown")]
 
     out1 <- readRDS("${trimming}")
-    out2 <- filterAndTrim(fwd = paste0("${sample_id}",".R1.cutadapt.fastq.gz"),
-                        filt = paste0("${sample_id}", ".R1.filtered.fastq.gz"),
-                        rev = paste0("${sample_id}",".R2.cutadapt.fastq.gz"),
-                        filt.rev = paste0("${sample_id}", ".R2.filtered.fastq.gz"),
+    out2 <- filterAndTrim(fwd = fastqFs,
+                        filt = stringr::str_replace(fastqFs, ".cutadapt.fastq.gz", ".filtered.fastq.gz"),
+                        rev = fastqRs,
+                        filt.rev = stringr::str_replace(fastqRs, ".cutadapt.fastq.gz", ".filtered.fastq.gz"),
                         maxEE = c(${params.maxEEFor},${params.maxEERev}),
                         truncLen = c(${params.truncFor},${params.truncRev}),
                         truncQ = ${params.truncQ},
@@ -626,7 +675,7 @@ process LearnErrors {
     file "errorsF.RDS" into errorsFor
     file "errorsR.RDS" into errorsRev
     file "*.pdf"
-	
+    
     when:
     params.precheck == false
 
@@ -638,32 +687,32 @@ process LearnErrors {
 
     # File parsing
     filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
-	filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
-	
-	sample.namesF <- sapply(strsplit(basename(filtFs), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
+    filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
+    
+    sample.namesF <- sapply(strsplit(basename(filtFs), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
     sample.namesR <- sapply(strsplit(basename(filtRs), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
     set.seed(100)
 
     # Learn error rates
     errF <- learnErrors(filtFs, multithread=${task.cpus})
-	errR <- learnErrors(filtRs, multithread=${task.cpus})
+    errR <- learnErrors(filtRs, multithread=${task.cpus})
 
     # optional NovaSeq binning error correction
     if (as.logical('${params.qualityBinning}') == TRUE ) {
         print("Running binning correction")
         errs <- t(apply(getErrors(errF), 1, function(x) { x[x < x[40]] = x[40]; return(x)} ))
         errF\$err_out <- errs
-		errs <- t(apply(getErrors(errR), 1, function(x) { x[x < x[40]] = x[40]; return(x)} ))
+        errs <- t(apply(getErrors(errR), 1, function(x) { x[x < x[40]] = x[40]; return(x)} ))
         errR\$err_out <- errs
     }
 
     pdf("err.pdf")
     plotErrors(errF, nominalQ=TRUE)
-	plotErrors(errR, nominalQ=TRUE)
+    plotErrors(errR, nominalQ=TRUE)
     dev.off()
 
     saveRDS(errF, "errorsF.RDS")
-	saveRDS(errR, "errorsR.RDS")
+    saveRDS(errR, "errorsR.RDS")
     """
 }
 
@@ -700,53 +749,53 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         script:
         """
-		#!/usr/bin/env Rscript
+        #!/usr/bin/env Rscript
         library(dada2); packageVersion("dada2")
         setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
-		filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
-		filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
+        filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
+        filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
 
         errF <- readRDS("${errFor}")
         errR <- readRDS("${errRev}")
-		cat("Processing all samples\n")
+        cat("Processing all samples\n")
 
-		#Variable selection from CLI input flag --pool
-		pool <- "${params.pool}"
-		if(pool == "T" || pool == "TRUE"){
-		  pool <- as.logical(pool)
-		}
-		ddFs <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=pool)
-		ddRs <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=pool)
+        #Variable selection from CLI input flag --pool
+        pool <- "${params.pool}"
+        if(pool == "T" || pool == "TRUE"){
+          pool <- as.logical(pool)
+        }
+        ddFs <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=pool)
+        ddRs <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=pool)
 
-		mergers <- mergePairs(ddFs, filtFs, ddRs, filtRs,
-			returnRejects = TRUE,
-			minOverlap = ${params.minOverlap},
-			maxMismatch = ${params.maxMismatch},
-			trimOverhang = as.logical("${params.trimOverhang}"),
-			justConcatenate = as.logical("${params.justConcatenate}")
-			)
+        mergers <- mergePairs(ddFs, filtFs, ddRs, filtRs,
+            returnRejects = TRUE,
+            minOverlap = ${params.minOverlap},
+            maxMismatch = ${params.maxMismatch},
+            trimOverhang = as.logical("${params.trimOverhang}"),
+            justConcatenate = as.logical("${params.justConcatenate}")
+            )
 
-		# TODO: make this a single item list with ID as the name, this is lost
-		# further on
-		saveRDS(mergers, "all.mergers.RDS")
+        # TODO: make this a single item list with ID as the name, this is lost
+        # further on
+        saveRDS(mergers, "all.mergers.RDS")
 
-		saveRDS(ddFs, "all.ddF.RDS")
-		saveRDS(ddRs, "all.ddR.RDS")
+        saveRDS(ddFs, "all.ddF.RDS")
+        saveRDS(ddRs, "all.ddR.RDS")
 
-		# go ahead and make seqtable
-		seqtab <- makeSequenceTable(mergers)
+        # go ahead and make seqtable
+        seqtab <- makeSequenceTable(mergers)
 
-		saveRDS(seqtab, "seqtab.original.RDS")
+        saveRDS(seqtab, "seqtab.original.RDS")
 
-		if (${params.minMergedLen} > 0) {
-		   seqtab <- seqtab[,nchar(colnames(seqtab)) >= ${params.minMergedLen}]
-		}
+        if (${params.minMergedLen} > 0) {
+           seqtab <- seqtab[,nchar(colnames(seqtab)) >= ${params.minMergedLen}]
+        }
 
-		if (${params.maxMergedLen} > 0) {
-		   seqtab <- seqtab[,nchar(colnames(seqtab)) <= ${params.maxMergedLen}]
-		}
+        if (${params.maxMergedLen} > 0) {
+           seqtab <- seqtab[,nchar(colnames(seqtab)) <= ${params.maxMergedLen}]
+        }
 
-		saveRDS(seqtab, "seqtab.RDS")
+        saveRDS(seqtab, "seqtab.RDS")
         """
         }
 } else {
@@ -779,7 +828,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         errF <- readRDS("${errFor}")
         errR <- readRDS("${errRev}")
         cat("Processing:", "${sample_id}", "\\n")
-		
+        
         filtFs <- "${filtFor}"
         filtRs <- "${filtRev}"
 
@@ -918,7 +967,7 @@ if (!params.skipChimeraDetection) {
 
 // TODO: Add IDTAXA + Blast
 if (params.reference) {
-	refFile = file(params.reference)
+    refFile = file(params.reference)
     if (params.taxassignment == 'rdp') {
         // TODO: we could combine these into the same script
         
@@ -1033,7 +1082,7 @@ if (params.reference) {
             #!/usr/bin/env Rscript
             library(dada2); packageVersion("dada2")
             library(DECIPHER); packageVersion("DECIPHER")
-			library(stringr); packageVersion("stringr")
+            library(stringr); packageVersion("stringr")
 
             seqtab <- readRDS("${st}")
 
@@ -1041,11 +1090,11 @@ if (params.reference) {
             dna <- DNAStringSet(getSequences(seqtab))
 
             # load database; this should be a RData file
-			if (stringr::str_detect("${refFile}", ".RData")){
-				load("${refFile}")
-			} else if(stringr::str_detect("${refFile}", ".rds")){
-				trainingSet <- readRDS("${refFile}")
-			}
+            if (stringr::str_detect("${refFile}", ".RData")){
+                load("${refFile}")
+            } else if(stringr::str_detect("${refFile}", ".rds")){
+                trainingSet <- readRDS("${refFile}")
+            }
 
             ids <- IdTaxa(dna, trainingSet,
                 strand="both",
