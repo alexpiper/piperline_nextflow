@@ -415,7 +415,7 @@ process Nfilter {
 
 /*
  *
- * Step 3: Remove primers with bbmap
+ * Step 3: Remove primers with cutadapt
  *
  */
  
@@ -431,7 +431,7 @@ if (params.lengthvar == false) {
         file("reverseP.fa") from revprimers
         
         output:
-        set val(sample_id), "${sample_id}.*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        set val(sample_id), "${sample_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
         when:
@@ -441,7 +441,7 @@ if (params.lengthvar == false) {
         """
         #!/bin/bash
         
-        if [ ! -z "${demux}" ];
+        if [ ! -z "${params.demux}" ];
         then
         echo "More than one primer detected, demultiplexing (single core)";
         cutadapt \\
@@ -460,9 +460,9 @@ if (params.lengthvar == false) {
             -G "${params.revprimer}" \\
             --cores ${task.cpus} \\
             -n 2 \\
-            -o "${pairId}.R1.cutadapt.fastq.gz" \\
-            -p "${pairId}.R2.cutadapt.fastq.gz" \\
-            "${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+            -o "${sample_id}.R1.cutadapt.fastq.gz" \\
+            -p "${sample_id}.R2.cutadapt.fastq.gz" \\
+            "${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
         fi;
         """
     }
@@ -482,7 +482,7 @@ else if (params.lengthvar == true) {
         file("reverseP_rc.fa") from rcrev
         
         output:
-        set val(sample_id), "${sample_id}.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        set val(sample_id), "${sample_id}*.R[12].cutadapt.fastq.gz optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
         when:
@@ -492,7 +492,7 @@ else if (params.lengthvar == true) {
         """
         #!/bin/bash
         
-        if [ ! -z "${demux}" ];
+        if [ ! -z "${params.demux}" ];
         then
         echo "More than one primer detected, demultiplexing (single-core)";
         cutadapt \\
@@ -515,9 +515,9 @@ else if (params.lengthvar == true) {
             -G "${params.revprimer}" -A ${fwd_rc}\\
             --cores ${task.cpus} \\
             -n 2 \\
-            -o "${pairId}.R1.cutadapt.fastq.gz" \\
-            -p "${pairId}.R2.cutadapt.fastq.gz" \\
-            "${reads[0]}" "${reads[1]}" > "${pairId}.cutadapt.out"
+            -o "${sample_id}.R1.cutadapt.fastq.gz" \\
+            -p "${sample_id}.R2.cutadapt.fastq.gz" \\
+            "${reads[0]}" "${reads[1]}" > "${sample_id}.cutadapt.out"
         fi;
         """
     }    
