@@ -58,7 +58,7 @@ def helpMessage() {
       --pool                        Should sample pooling be used to aid identification of low-abundance ASVs? Options are
                                     pseudo pooling: "pseudo", true: "T", false: "F"
       --outdir                      The output directory where the results will be saved
-      --email                       Set this parameter to your e-mail address to get a summary e-mail with details of the run
+      --email                       Set this parameter to your e-mail adadaRsess to get a summary e-mail with details of the run
                                     sent to you when the workflow exits
       -name                         Name for the pipeline run. If not specified, Nextflow will automatically generate a random mnemonic.
       --idType                      The ASV IDs are renamed to simplify downstream analysis, in particular with downstream tools.  The
@@ -172,7 +172,7 @@ summary['Current path']   = "$PWD"
 summary['Script dir']     = workflow.projectDir
 summary['Config Profile'] = workflow.profile
 if(params.email) {
-    summary['E-mail Address'] = params.email
+    summary['E-mail AdadaRsess'] = params.email
 }
 log.info summary.collect { k,v -> "${k.padRight(15)}: $v" }.join("\n")
 log.info "========================================="
@@ -229,7 +229,7 @@ if (params.subsample == true) {
 
 process runFastQC {
     tag { "rFQC.${sample_id}" }
-    publishDir "${params.outdir}/FASTQC-prefilter", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/qc/FASTQC-prefilter", mode: "copy", overwrite: true
 
     input:
     tuple sample_id, file(For), file(Rev) from samples_toqual_ch
@@ -246,7 +246,7 @@ process runFastQC {
 // TODO: combine MultiQC reports and split by directory (no need for two)
 process runMultiQC {
     tag { "runMultiQC" }
-    publishDir "${params.outdir}/MultiQC-prefilter", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/qc/MultiQC-prefilter", mode: 'copy', overwrite: true
 
     input:
     file('./raw-seq/*') from fastqc_files_ch.collect()
@@ -384,6 +384,7 @@ process Nfilter {
                         rev = "${reads[1]}",
                         filt.rev = paste0("${sample_id}", ".R2.noN.fastq.gz"),
                         maxN = 0,
+                        matchIDs = as.logical(${params.matchIDs}),
                         multithread = ${task.cpus})
                         
     # Write out fasta of primers - Handles multiple primers
@@ -575,6 +576,7 @@ process FilterAndTrim {
                         minLen = ${params.minLen},
                         compress = TRUE,
                         verbose = TRUE,
+                        matchIDs = as.logical(${params.matchIDs}),
                         multithread = ${task.cpus})
     #Change input read counts to actual raw read counts
     out3 <- cbind(out1, out2)
@@ -592,7 +594,7 @@ process FilterAndTrim {
 
 process runFastQC_postfilterandtrim {
     tag { "rFQC_post_FT.${sample_id}" }
-    publishDir "${params.outdir}/FastQC-postfilter", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/qc/FastQC-postfilter", mode: "copy", overwrite: true
 
     input:
     set val(sample_id), file(filtFor), file(filtRev) from filteredReadsforQC
@@ -610,7 +612,7 @@ process runFastQC_postfilterandtrim {
 
 process runMultiQC_postfilterandtrim {
     tag { "runMultiQC_postfilterandtrim" }
-    publishDir "${params.outdir}/MultiQC-postfilter", mode: 'copy', overwrite: true
+    publishDir "${params.outdir}/qc/MultiQC-postfilter", mode: 'copy', overwrite: true
 
     input:
     file('./raw-seq/*') from fastqc_files2_ch.collect()
@@ -631,6 +633,7 @@ process runMultiQC_postfilterandtrim {
     """
 }
 
+// TODO: Make this work with demultiplexing
 process mergeTrimmedTable {
     tag { "mergeTrimmedTable" }
     publishDir "${params.outdir}/csv", mode: "copy", overwrite: true
@@ -664,7 +667,7 @@ process mergeTrimmedTable {
 
 process LearnErrors {
     tag { "LearnErrors" }
-    publishDir "${params.outdir}/logs", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
     file fReads from forReads.collect()
@@ -693,8 +696,18 @@ process LearnErrors {
     set.seed(100)
 
     # Learn error rates
-    errF <- learnErrors(filtFs, multithread=${task.cpus})
-    errR <- learnErrors(filtRs, multithread=${task.cpus})
+    errF <- learnErrors(filtFs,         
+        nbases=${params.errbases},
+        errorEstimationFunction=${params.errfun},
+        multithread=${task.cpus},
+        randomize=FALSE
+        )
+    errR <- learnErrors(filtRs,
+        nbases=${params.errbases},
+        errorEstimationFunction=${params.errfun},
+        multithread=${task.cpus},
+        randomize=FALSE
+        )
 
     # optional NovaSeq binning error correction
     if (as.logical('${params.qualityBinning}') == TRUE ) {
@@ -739,8 +752,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         output:
         file "seqtab.RDS" into seqTable,rawSeqTableToRename
         file "all.mergers.RDS" into mergerTracking
-        file "all.ddF.RDS" into dadaForReadTracking
-        file "all.ddR.RDS" into dadaRevReadTracking
+        file "all.dadaFs.RDS" into dadaForReadTracking
+        file "all.dadaRs.RDS" into dadaRevReadTracking
         file "seqtab.*"
 
         when:
@@ -763,10 +776,10 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         if(pool == "T" || pool == "TRUE"){
           pool <- as.logical(pool)
         }
-        ddFs <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=pool)
-        ddRs <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=pool)
+        dadaFss <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=pool)
+        dadaRss <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=pool)
 
-        mergers <- mergePairs(ddFs, filtFs, ddRs, filtRs,
+        mergers <- mergePairs(dadaFss, filtFs, dadaRss, filtRs,
             returnRejects = TRUE,
             minOverlap = ${params.minOverlap},
             maxMismatch = ${params.maxMismatch},
@@ -778,30 +791,30 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         # further on
         saveRDS(mergers, "all.mergers.RDS")
 
-        saveRDS(ddFs, "all.ddF.RDS")
-        saveRDS(ddRs, "all.ddR.RDS")
+        saveRDS(dadaFss, "all.dadaFs.RDS")
+        saveRDS(dadaRss, "all.dadaRs.RDS")
 
         # go ahead and make seqtable
         seqtab <- makeSequenceTable(mergers)
-
-        saveRDS(seqtab, "seqtab.original.RDS")
-
-        if (${params.minMergedLen} > 0) {
-           seqtab <- seqtab[,nchar(colnames(seqtab)) >= ${params.minMergedLen}]
-        }
-
-        if (${params.maxMergedLen} > 0) {
-           seqtab <- seqtab[,nchar(colnames(seqtab)) <= ${params.maxMergedLen}]
-        }
-
         saveRDS(seqtab, "seqtab.RDS")
+        
+        # Track reads
+        getN <- function(x) sum(getUniques(x))
+        dada_out <- cbind(sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN)) %>%
+            magrittr::set_colnames(c("dadaFs", "dadaRs", "merged")) %>%
+            as.data.frame() %>%
+            rownames_to_column("sample_id") %>%
+            mutate(sample_id = str_replace(basename(sample_id), pattern="_S.*$", replacement=""))
+        
+        # TODO: change this to flow cell id
+        write.csv(dada_out, "dada_out.csv") 
         """
         }
 } else {
     // pool = F, process per sample
     process PerSampleInferDerepAndMerge {
         tag { "PerSampleInferDerepAndMerge" }
-        publishDir "${params.outdir}/logs", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
         input:
         set val(sample_id), file(filtFor), file(filtRev) from filteredReads
@@ -811,8 +824,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         output:
         file "seqtab.RDS" into seqTable
         file "all.mergers.RDS" into mergerTracking
-        file "all.ddF.RDS" into dadaForReadTracking
-        file "all.ddR.RDS" into dadaRevReadTracking
+        file "all.dadaFs.RDS" into dadaForReadTracking
+        file "all.dadaRs.RDS" into dadaRevReadTracking
         file "seqtab.*"
 
         when:
@@ -831,10 +844,10 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         filtFs <- "${filtFor}"
         filtRs <- "${filtRev}"
 
-        ddF <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
-        ddR <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
+        dadaFs <- dada(filtFs, err=errF, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
+        dadaRs <- dada(filtRs, err=errR, multithread=${task.cpus}, pool=as.logical("${params.pool}"))
 
-        merger <- mergePairs(ddF, filtFs, ddR, filtRs,
+        merger <- mergePairs(dadaFs, filtFs, dadaRs, filtRs,
             returnRejects = TRUE,
             minOverlap = ${params.minOverlap},
             maxMismatch = ${params.maxMismatch},
@@ -844,8 +857,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         saveRDS(merger, paste("${sample_id}", "merged", "RDS", sep="."))
 
-        saveRDS(ddFs, "all.ddF.RDS")
-        saveRDS(ddRs, "all.ddR.RDS")
+        saveRDS(dadaFss, "all.dadaFs.RDS")
+        saveRDS(dadaRss, "all.dadaRs.RDS")
         """
     }
 
@@ -854,12 +867,12 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
         input:
-        file ddFs from dadaFor.collect()
-        file ddRs from dadaRev.collect()
+        file dadaFss from dadaFor.collect()
+        file dadaRss from dadaRev.collect()
 
         output:
-        file "all.ddF.RDS" into dadaForReadTracking
-        file "all.ddR.RDS" into dadaRevReadTracking
+        file "all.dadaFs.RDS" into dadaForReadTracking
+        file "all.dadaRs.RDS" into dadaRevReadTracking
 
         when:
         params.precheck == false
@@ -870,12 +883,12 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         library(dada2)
         packageVersion("dada2")
 
-        dadaFs <- lapply(list.files(path = '.', pattern = '.ddF.RDS$'), function (x) readRDS(x))
-        names(dadaFs) <- sub('.ddF.RDS', '', list.files('.', pattern = '.ddF.RDS'))
-        dadaRs <- lapply(list.files(path = '.', pattern = '.ddR.RDS$'), function (x) readRDS(x))
-        names(dadaRs) <- sub('.ddR.RDS', '', list.files('.', pattern = '.ddR.RDS'))
-        saveRDS(dadaFs, "all.ddF.RDS")
-        saveRDS(dadaRs, "all.ddR.RDS")
+        dadaFs <- lapply(list.files(path = '.', pattern = '.dadaFs.RDS$'), function (x) readRDS(x))
+        names(dadaFs) <- sub('.dadaFs.RDS', '', list.files('.', pattern = '.dadaFs.RDS'))
+        dadaRs <- lapply(list.files(path = '.', pattern = '.dadaRs.RDS$'), function (x) readRDS(x))
+        names(dadaRs) <- sub('.dadaRs.RDS', '', list.files('.', pattern = '.dadaRs.RDS'))
+        saveRDS(dadaFs, "all.dadaFs.RDS")
+        saveRDS(dadaRs, "all.dadaRs.RDS")
         '''
     }
 
@@ -911,16 +924,21 @@ if (params.pool == "T" || params.pool == 'pseudo') {
     }
 }
 
+// TODO: Add seqtab merge here for multiple runs
+
+
 /*
  *
  * Step 8: ASV filtering
  *
  */
 
-// TODO: add length filter, codon checks, PHMM alignment
-if (!params.skipChimeraDetection) {
-    process RemoveChimeras {
-        tag { "RemoveChimeras" }
+// TODO: add length filter
+// If coding, then do codon checks
+// if PHMM provided, align to phmm, output this instead of later alignment below
+if (params.coding) {
+    process coding_asv_filter {
+        tag { "coding_asv_filter" }
         publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
         input:
@@ -937,22 +955,130 @@ if (!params.skipChimeraDetection) {
         """
         #!/usr/bin/env Rscript
         library(dada2); packageVersion("dada2")        
-
+        library(tidyverse); packageVersion("tidyverse")
+        library(biostrings); packageVersion("Biostrings")
+        source("functions.R") # Needed for codon_filter & PHMM - taken from taxreturn
+        
         st.all <- readRDS("${st}")
 
         # Remove chimeras
-        seqtab <- removeBimeraDenovo(
+        seqtab_nochim <- removeBimeraDenovo(
             st.all, 
             method="consensus", 
             multithread=${task.cpus}, 
             verbose=TRUE ${chimOpts} 
             )
 
-        saveRDS(seqtab, "seqtab_final.RDS")
+        #cut to expected size
+        seqtab_cut <- seqtab_nochim[,nchar(colnames(seqtab_nochim)) %in% as.numeric(${params.min_asv_len}):as.numeric(${params.max_asv_len})]
+        
+        # TODO: ADD PHMM HERE       
+        
+        #Filter sequences containing stop codons
+        seqs <- Biostrings::DNAStringSet(getSequences(seqtab_cut))
+        codon_filt <- codon_filter(seqs, genetic_code = "${params.genetic_code}") # Internal function
+        seqtab_final <- seqtab_cut[,colnames(seqtab_cut) %in% codon_filt]                
+        
+        saveRDS(seqtab_final, "seqtab_final.RDS")
+        
+        # summarise cleanup
+        cleanup <- st.all %>%
+          as.data.frame() %>%
+          tidyr::pivot_longer( everything(),
+            names_to = "OTU",
+            values_to = "Abundance") %>%
+          dplyr::group_by(OTU) %>%
+          dplyr::summarise(Abundance = sum(Abundance)) %>%
+          dplyr::mutate(length  = nchar(OTU)) %>%
+          dplyr::mutate(type = case_when(
+            !OTU %in% getSequences(seqtab_nochim) ~ "Chimera",
+            !OTU %in% getSequences(seqtab_cut) ~ "Incorrect size",
+            !OTU %in% getSequences(seqtab_final) ~ "Stop codons",
+            TRUE ~ "Real"
+          )) 
+        write_csv(cleanup, "ASV_cleanup_summary.csv")
+        
+        # Output length distribution plots
+        gg.abundance <- ggplot(cleanup, aes(x=length, y=Abundance, fill=type))+
+            geom_bar(stat="identity") + 
+            labs(title = "Abundance of sequences")
+
+        gg.unique <- ggplot(cleanup, aes(x=length, fill=type))+
+            geom_histogram() + 
+            labs(title = "Number of unique sequences")
+
+        pdf(paste0("seqtab_length_dist.pdf"), width = 11, height = 8 , paper="a4r")
+          plot(gg.abundance / gg.unique)
+        try(dev.off(), silent=TRUE)
         """
     }
 } else {
-    seqTable.into {seqTableToTax;seqTableToRename}
+    process noncoding_asv_filter {
+        tag { "noncoding_asv_filter" }
+        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+
+        input:
+        file st from seqTable
+
+        output:
+        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename
+
+        when:
+        params.precheck == false
+
+        script:
+        chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
+        """
+        #!/usr/bin/env Rscript
+        library(dada2); packageVersion("dada2")        
+        library(tidyverse); packageVersion("tidyverse")
+        library(biostrings); packageVersion("Biostrings")
+        
+        st.all <- readRDS("${st}")
+
+        # Remove chimeras
+        seqtab_nochim <- removeBimeraDenovo(
+            st.all, 
+            method="consensus", 
+            multithread=${task.cpus}, 
+            verbose=TRUE ${chimOpts} 
+            )
+
+        #cut to expected size
+        seqtab_final <- seqtab_nochim[,nchar(colnames(seqtab_nochim)) %in% as.numeric(${params.min_asv_len}):as.numeric(${params.max_asv_len})]
+        
+        saveRDS(seqtab_final, "seqtab_final.RDS")        
+        
+        # summarise cleanup
+        cleanup <- st.all %>%
+          as.data.frame() %>%
+          tidyr::pivot_longer( everything(),
+            names_to = "OTU",
+            values_to = "Abundance") %>%
+          dplyr::group_by(OTU) %>%
+          dplyr::summarise(Abundance = sum(Abundance)) %>%
+          dplyr::mutate(length  = nchar(OTU)) %>%
+          dplyr::mutate(type = case_when(
+            !OTU %in% getSequences(seqtab_nochim) ~ "Chimera",
+            !OTU %in% getSequences(seqtab_final) ~ "Incorrect size",
+            TRUE ~ "Real"
+          )) 
+        readr::write_csv(cleanup, "ASV_cleanup_summary.csv")
+        
+        # Output length distribution plots
+        gg.abundance <- ggplot(cleanup, aes(x=length, y=Abundance, fill=type))+
+            geom_bar(stat="identity") + 
+            labs(title = "Abundance of sequences")
+
+        gg.unique <- ggplot(cleanup, aes(x=length, fill=type))+
+            geom_histogram() + 
+            labs(title = "Number of unique sequences")
+
+        pdf(paste0("seqtab_length_dist.pdf"), width = 11, height = 8 , paper="a4r")
+          plot(gg.abundance / gg.unique)
+        try(dev.off(), silent=TRUE)
+        """
+    }
 }
 
 /*
@@ -1344,6 +1470,7 @@ process GenerateTaxTables {
 
 // NOTE: 'when' directive doesn't work if channels have the same name in
 // two processes
+// TODO: if PHMM provided, subset the previous alignment to just the retained sequences and output that
 
 if (!params.precheck && params.runTree && params.lengthvar == false) {
 
@@ -1486,14 +1613,14 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
 process ReadTracking {
     tag { "ReadTracking" }
-    publishDir "${params.outdir}/logs", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
     file trimmedTable from trimmedReadTracking
     file sTable from seqTableFinalTracking
     file mergers from mergerTracking
-    file ddFs from dadaForReadTracking
-    file ddRs from dadaRevReadTracking
+    file dadaFss from dadaForReadTracking
+    file dadaRss from dadaRevReadTracking
 
     output:
     file "all.readtracking.txt"
@@ -1510,12 +1637,12 @@ process ReadTracking {
     getN <- function(x) sum(getUniques(x))
 
     # the gsub here might be a bit brittle...
-    dadaFs <- as.data.frame(sapply(readRDS("${ddFs}"), getN))
+    dadaFs <- as.data.frame(sapply(readRDS("${dadaFss}"), getN))
     rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
     colnames(dadaFs) <- c("denoisedF")
     dadaFs\$SampleID <- rownames(dadaFs)
 
-    dadaRs <- as.data.frame(sapply(readRDS("${ddRs}"), getN))
+    dadaRs <- as.data.frame(sapply(readRDS("${dadaRss}"), getN))
     rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
     colnames(dadaRs) <- c("denoisedR")
     dadaRs\$SampleID <- rownames(dadaRs)
