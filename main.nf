@@ -423,7 +423,6 @@ process Nfilter {
 if (params.lengthvar == false) {
     process cutadapt {
         tag { "filt_step2_${sample_id}" }
-        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
         set sample_id, reads from filt_step2
@@ -472,7 +471,6 @@ else if (params.lengthvar == true) {
     //TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
     process cutadapt_var {
         tag { "varfilt_step2_${sample_id}" }
-        publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
         input:
         set sample_id, reads from filt_step2
@@ -482,7 +480,7 @@ else if (params.lengthvar == true) {
         file("reverseP_rc.fa") from rcrev
         
         output:
-        set val(sample_id), "${sample_id}*.R[12].cutadapt.fastq.gz optional true into filt_step3
+        set val(sample_id), "${sample_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
         when:
@@ -537,7 +535,6 @@ else if (params.lengthvar == true) {
  
 process FilterAndTrim {
     tag { "filt_step3_${sample_id}" }
-    publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
 
     input:
     set sample_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
@@ -636,7 +633,7 @@ process runMultiQC_postfilterandtrim {
 
 process mergeTrimmedTable {
     tag { "mergeTrimmedTable" }
-    publishDir "${params.outdir}/dada2-FilterAndTrim", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/csv", mode: "copy", overwrite: true
 
     input:
     file trimData from trimTracking.collect()
@@ -667,7 +664,7 @@ process mergeTrimmedTable {
 
 process LearnErrors {
     tag { "LearnErrors" }
-    publishDir "${params.outdir}/dada2-LearnErrors", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/logs", mode: "copy", overwrite: true
 
     input:
     file fReads from forReads.collect()
@@ -728,7 +725,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
     process PoolSamplesInferDerepAndMerge {
         tag { "PoolSamplesInferDerepAndMerge" }
-        publishDir "${params.outdir}/dada2-Derep-Pooled", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
         // TODO: filteredReads channel has ID and two files, should fix this
         // with a closure, something like  { it[1:2] }, or correct the channel
@@ -804,7 +801,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
     // pool = F, process per sample
     process PerSampleInferDerepAndMerge {
         tag { "PerSampleInferDerepAndMerge" }
-        publishDir "${params.outdir}/dada2-Derep", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/logs", mode: "copy", overwrite: true
 
         input:
         set val(sample_id), file(filtFor), file(filtRev) from filteredReads
@@ -848,16 +845,13 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         saveRDS(merger, paste("${sample_id}", "merged", "RDS", sep="."))
 
         saveRDS(ddFs, "all.ddF.RDS")
-        saveRDS(derepFs, "all.derepFs.RDS")
-
         saveRDS(ddRs, "all.ddR.RDS")
-        saveRDS(derepRs, "all.derepRs.RDS")
         """
     }
 
     process mergeDadaRDS {
         tag { "mergeDadaRDS" }
-        publishDir "${params.outdir}/dada2-Inference", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
         input:
         file ddFs from dadaFor.collect()
@@ -887,7 +881,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
     process SequenceTable {
         tag { "SequenceTable" }
-        publishDir "${params.outdir}/dada2-SeqTable", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
         input:
         file mr from mergedReads.collect()
@@ -927,7 +921,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 if (!params.skipChimeraDetection) {
     process RemoveChimeras {
         tag { "RemoveChimeras" }
-        publishDir "${params.outdir}/dada2-Chimera-Taxonomy", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
         input:
         file st from seqTable
@@ -980,7 +974,7 @@ if (params.reference) {
 
             process AssignTaxSpeciesRDP {
                 tag { "AssignTaxSpeciesRDP" }
-                publishDir "${params.outdir}/dada2-Chimera-Taxonomy", mode: "copy", overwrite: true
+                publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
                 input:
                 file st from seqTableToTax
@@ -1026,7 +1020,7 @@ if (params.reference) {
 
             process AssignTaxonomyRDP {
                 tag { "TaxonomyRDP" }
-                publishDir "${params.outdir}/dada2-Chimera-Taxonomy", mode: "copy", overwrite: true
+                publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
                 input:
                 file st from seqTableToTax
@@ -1065,7 +1059,7 @@ if (params.reference) {
     } else if (params.taxassignment == 'idtaxa') {
         process TaxonomyIDTAXA {
             tag { "TaxonomyIDTAXA" }
-            publishDir "${params.outdir}/dada2-Chimera-Taxonomy", mode: "copy", overwrite: true
+            publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
             input:
             file st from seqTableToTax
@@ -1164,7 +1158,7 @@ if (params.reference) {
 
 process RenameASVs {
     tag { "RenameASVs" }
-    publishDir "${params.outdir}/dada2-Tables", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
     input:
     file st from seqTableToRename
@@ -1217,7 +1211,7 @@ process RenameASVs {
 
 process GenerateSeqTables {
     tag { "GenerateSeqTables" }
-    publishDir "${params.outdir}/dada2-Tables", mode: "link", overwrite: true
+    publishDir "${params.outdir}/rds", mode: "link", overwrite: true
 
     input:
     file st from seqTableToTable
@@ -1274,7 +1268,7 @@ process GenerateSeqTables {
 
 process GenerateTaxTables {
     tag { "GenerateTaxTables" }
-    publishDir "${params.outdir}/dada2-Tables", mode: "link", overwrite: true
+    publishDir "${params.outdir}/rds", mode: "link", overwrite: true
 
     input:
     file tax from taxTableToTable
@@ -1357,7 +1351,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
         process AlignReadsDECIPHER {
             tag { "AlignReadsDECIPHER" }
-            publishDir "${params.outdir}/dada2-DECIPHER", mode: "copy", overwrite: true
+            publishDir "${params.outdir}/fasta", mode: "copy", overwrite: true
             errorStrategy 'ignore'
 
             input:
@@ -1393,7 +1387,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
         process GenerateTreePhangorn {
             tag { "GenerateTreePhangorn" }
-            publishDir "${params.outdir}/dada2-Phangorn", mode: "copy", overwrite: true
+            publishDir "${params.outdir}/trees", mode: "copy", overwrite: true
 
             input:
             file aln from alnFile
@@ -1429,7 +1423,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
         process GenerateTreeFasttree {
             tag { "GenerateTreeFasttree" }
-            publishDir "${params.outdir}/dada2-Fasttree", mode: "copy", overwrite: true
+            publishDir "${params.outdir}/trees", mode: "copy", overwrite: true
 
             input:
             file aln from alnFile
@@ -1453,7 +1447,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
     process RootTree {
         tag { "RootTree" }
-        publishDir "${params.outdir}/dada2-RootedTree", mode: "link"
+        publishDir "${params.outdir}/trees", mode: "link"
 
         input:
         file tree from treeGTRFile
@@ -1492,7 +1486,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
 
 process ReadTracking {
     tag { "ReadTracking" }
-    publishDir "${params.outdir}/dada2-ReadTracking", mode: "copy", overwrite: true
+    publishDir "${params.outdir}/logs", mode: "copy", overwrite: true
 
     input:
     file trimmedTable from trimmedReadTracking
