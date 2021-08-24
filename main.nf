@@ -18,7 +18,9 @@ def helpMessage() {
 
     This pipeline can be run specifying parameters in a config file or with command line flags.
     The typical example for running the pipeline with command line flags is as follows:
-    nextflow run alexpiper/piperline --reads '*_R{1,2}.fastq.gz' --trimFor 24 --trimRev 25 --reference 'gg_13_8_train_set_97.fa.gz' -profile uct_hex
+    nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
+    --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
+    --reference 'idtaxa_bftrimmed.rds' -profile basc 
 
     The typical command for running the pipeline with your own config (instead of command line flags) is as follows:
     nextflow run alexpiper/piperline -c dada2_user_input.config -profile uct_hex
@@ -28,17 +30,24 @@ def helpMessage() {
 
     To override existing values from the command line, please type these parameters:
 
-    Mandatory arguments:
+    Mandatory inputs:
       --reads                       Path to input data (must be surrounded with quotes)
-      -profile                      Hardware config to use. Currently profile available for UCT's HPC 'uct_hex' - create your own if necessary
+      --samplesheet                 SampleSheet.csv file used for the sequencing run (must be surrounded with quotes)
+      --runparam                    RunParameters.xml file from the sequencing run (must be surrounded with quotes)
+      --reference                   Path to taxonomic database to be used for annotation (e.g. gg_13_8_train_set_97.fa.gz) (must be surrounded with quotes)
+      --fwdprimer                   Sequence of the forward primer (must be surrounded with quotes)
+      --revprimer                   Sequence of the reverse primer (must be surrounded with quotes)
+      --fwdprimer_name              name of the forward primer (must be surrounded with quotes)
+      --revprimer_name              name of the reverse primer (must be surrounded with quotes)
+      -profile                      Hardware config to use. Currently profile available for BASC 'basc' - create your own if necessary
                                     NB -profile should always be specified on the command line, not in the config file
-      --trimFor                     integer. headcrop of read1 (set 0 if no trimming is needed)
-      --trimRev                     integer. headcrop of read2 (set 0 if no trimming is needed)
-      --reference                   Path to taxonomic database to be used for annotation (e.g. gg_13_8_train_set_97.fa.gz)
+
+    Optional inputs:
+      --interop                     Path to InterOp directory from the sequencing run (must be surrounded with quotes)
 
     All available read preparation parameters:
-      --trimFor                     integer. headcrop of read1
-      --trimRev                     integer. headcrop of read2
+      --trimFor                     integer. The number of nucleotides to remove from the start of read 1
+      --trimRev                     integer. The number of nucleotides to remove from the start of read 2
       --truncFor                    integer. truncate read1 here (i.e. if you want to trim 10bp off the end of a 250bp R1, truncFor should be set to 240). enforced before trimFor/trimRev
       --truncRev                    integer. truncate read2 here ((i.e. if you want to trim 10bp off the end of a 250bp R2, truncRev should be set to 240). enforced before trimFor/trimRev
       --maxEEFor                    integer. After truncation, R1 reads with higher than maxEE "expected errors" will be discarded. EE = sum(10^(-Q/10)), default=2
@@ -58,7 +67,7 @@ def helpMessage() {
       --pool                        Should sample pooling be used to aid identification of low-abundance ASVs? Options are
                                     pseudo pooling: "pseudo", true: "T", false: "F"
       --outdir                      The output directory where the results will be saved
-      --email                       Set this parameter to your e-mail adadaRsess to get a summary e-mail with details of the run
+      --email                       Set this parameter to your e-mail address to get a summary e-mail with details of the run
                                     sent to you when the workflow exits
       -name                         Name for the pipeline run. If not specified, Nextflow will automatically generate a random mnemonic.
       --idType                      The ASV IDs are renamed to simplify downstream analysis, in particular with downstream tools.  The
@@ -92,24 +101,25 @@ if (params.help){
 }
 
 //Validate inputs
-if ( params.trimFor == false && params.lengthvar == false) {
-    exit 1, "Must set length of R1 (--trimFor) that needs to be trimmed (set 0 if no trimming is needed)"
-}
-
-if ( params.trimRev == false && params.lengthvar == false) {
-    exit 1, "Must set length of R2 (--trimRev) that needs to be trimmed (set 0 if no trimming is needed)"
-}
 
 // if ( params.reference == false ) {
 //     exit 1, "Must set reference database using --reference"
 // }
 
-if (params.fwdprimer == false && params.lengthvar == true){
+if (params.fwdprimer == false){
     exit 1, "Must set forward primer using --fwdprimer"
 }
 
-if (params.revprimer == false && params.lengthvar == true){
+if (params.revprimer == false){
     exit 1, "Must set reverse primer using --revprimer"
+}
+
+if (params.fwdprimer_name == false){
+    exit 1, "Must set name of the reverse primer using--fwdprimer_name"
+}
+
+if (params.revprimer_name == false){
+    exit 1, "Must set name of the reverse primer using --revprimer_name"
 }
 
 if (!(['simple','md5'].contains(params.idType))) {
@@ -172,14 +182,14 @@ summary['Current path']   = "$PWD"
 summary['Script dir']     = workflow.projectDir
 summary['Config Profile'] = workflow.profile
 if(params.email) {
-    summary['E-mail AdadaRsess'] = params.email
+    summary['E-mail address'] = params.email
 }
 log.info summary.collect { k,v -> "${k.padRight(15)}: $v" }.join("\n")
 log.info "========================================="
 
 /*
  *
- * Step 0: Copy read files and set up name variables
+ * Step 0: Copy read files and setup samples
  *
  */
 
@@ -191,8 +201,9 @@ if (params.subsample == true) {
         tuple fastq_id, file(reads) from samples_ch
 
         output:
-        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_toqual_ch
-        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
+        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
+        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
+        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), into samples_to_validate
 
         script:
         """
@@ -224,8 +235,8 @@ if (params.subsample == true) {
         tuple fastq_id, file(reads) from samples_ch
 
         output:
-        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_toqual_ch
-        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_tofilt_ch
+        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
+        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
 
         """
         #!/bin/bash
@@ -250,6 +261,35 @@ if (params.subsample == true) {
     }
 }
 
+// TODO: Put sample_info in here
+// Check if sample file is provided? or else, make a new oe
+process validate_samplesheet {
+    tag { "validate_samplesheet" }
+    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
+
+    input:
+    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_to_validate
+    
+    output:
+    file(*.csv) into samdf_to_output
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(seqateurs)
+    library(tidyverse)
+    SampleSheet <- as.character("${params.samplesheet}")
+    runParameters <- as.character("${params.runparam}")
+
+    # Create samplesheet containing samples and run parameters for all runs
+    samdf <- seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4") %>%
+      distinct()
+      
+    #Write out updated sample CSV for use
+    write_csv(samdf, "Sample_info.csv")
+    """
+}
+
 /*
  *
  * Step 1: Pre-filter Quality control
@@ -261,7 +301,7 @@ process runFastQC {
     publishDir "${params.outdir}/qc/FASTQC-prefilter", mode: "copy", overwrite: true
 
     input:
-    tuple fastq_id, file(For), file(Rev) from samples_toqual_ch
+    tuple fastq_id, file(For), file(Rev) from samples_to_qual
 
     output:
     file '*_fastqc.{zip,html}' into fastqc_files_ch, fastqc_files2_ch
@@ -296,7 +336,7 @@ process runMultiQC {
 //    tag { "summarise_index_${fastq_id}" }
 //
 //    input:
-//    set fastq_id, file(reads) from samples_tofilt_ch
+//    set fastq_id, file(reads) from samples_to_filt
 //
 //    output:
 //    file '*_indexes.txt' into index_files
@@ -386,7 +426,7 @@ process Nfilter {
     tag { "nfilter_${fastq_id}" }
 
     input:
-    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_tofilt_ch
+    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_to_filt
     
     output:
     set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}.R[12].noN.fastq.gz" optional true into filt_step2
@@ -395,9 +435,6 @@ process Nfilter {
     file "reverseP.fa" into revprimers
     file "forwardP_rc.fa" into rcfor
     file "reverseP_rc.fa" into rcrev
-
-    
-    
 
     script:
     """
@@ -457,7 +494,7 @@ if (params.lengthvar == false) {
         tag { "filt_step2_${fastq_id}" }
 
         input:
-        set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from filt_step2.view()
+        set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from filt_step2
 
         file("forwardP.fa") from forprimers
         file("reverseP.fa") from revprimers
@@ -465,9 +502,6 @@ if (params.lengthvar == false) {
         output:
         set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
-
-        
-        
 
         script:
         """
@@ -507,7 +541,7 @@ else if (params.lengthvar == true) {
         tag { "varfilt_step2_${fastq_id}" }
 
         input:
-        set fastq_id, reads from filt_step2
+        set set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from filt_step2
         file("forwardP.fa") from forprimers
         file("reverseP.fa") from revprimers
         file("forwardP_rc.fa") from rcfor
@@ -516,9 +550,6 @@ else if (params.lengthvar == true) {
         output:
         set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
-
-        
-        
 
         script:
         """
@@ -573,16 +604,13 @@ process FilterAndTrim {
     tag { "filt_step3_${fastq_id}" }
 
     input:
-    set fastq_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
+    set fastq_id, fcid, sample_id, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming).view()
 
     output:
     set val(fastq_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
     file "*.R1.filtered.fastq.gz" optional true into forReads
     file "*.R2.filtered.fastq.gz" optional true into revReads
     file "*.trimmed.txt" into trimTracking
-
-    
-    
 
     script:
     """
@@ -598,11 +626,13 @@ process FilterAndTrim {
     fastqRs <- fastqRs[!stringr::str_detect(fastqRs, "unknown")]
 
     out1 <- readRDS("${trimming}")
-    out2 <- filterAndTrim(fwd = fastqFs,
+    out2 <- filterAndTrim(
+                        fwd = fastqFs,
                         filt = stringr::str_replace(fastqFs, ".cutadapt.fastq.gz", ".filtered.fastq.gz"),
                         rev = fastqRs,
                         filt.rev = stringr::str_replace(fastqRs, ".cutadapt.fastq.gz", ".filtered.fastq.gz"),
                         maxEE = c(${params.maxEEFor},${params.maxEERev}),
+                        trimLeft = c(${params.trimFor},${params.trimRev}),
                         truncLen = c(${params.truncFor},${params.truncRev}),
                         truncQ = ${params.truncQ},
                         maxN = ${params.maxN},
@@ -767,7 +797,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
     process PoolSamplesInferDerepAndMerge {
         tag { "PoolSamplesInferDerepAndMerge" }
-        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         // TODO: filteredReads channel has ID and two files, should fix this
         // with a closure, something like  { it[1:2] }, or correct the channel
@@ -839,7 +869,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
     // pool = F, process per sample
     process PerSampleInferDerepAndMerge {
         tag { "PerSampleInferDerepAndMerge" }
-        publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
         set val(fastq_id), file(filtFor), file(filtRev) from filteredReads
@@ -886,7 +916,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
     process mergeDadaRDS {
         tag { "mergeDadaRDS" }
-        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
         file dadaFs from dadaFor.collect()
@@ -899,8 +929,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         '''
         #!/usr/bin/env Rscript
-        library(dada2)
-        packageVersion("dada2")
+        library(dada2); packageVersion("dada2")
 
         dadaFs <- lapply(list.files(path = '.', pattern = '.dadaFs.RDS$'), function (x) readRDS(x))
         names(dadaFs) <- sub('.dadaFs.RDS', '', list.files('.', pattern = '.dadaFs.RDS'))
@@ -913,7 +942,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
     process SequenceTable {
         tag { "SequenceTable" }
-        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+        publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
         file mr from mergedReads.collect()
@@ -942,16 +971,13 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
 // TODO: Add seqtab merge here for multiple runs
 
-
 /*
  *
  * Step 8: ASV filtering
  *
  */
 
-// TODO: add length filter
-// If coding, then do codon checks
-// if PHMM provided, align to phmm, output this instead of later alignment below
+// TODO: if PHMM provided, align to phmm, output this instead of later alignment below
 if (params.coding) {
     process coding_asv_filter {
         tag { "coding_asv_filter" }
@@ -1133,7 +1159,7 @@ if (params.reference) {
                 file sp from speciesFile
 
                 output:
-                file "tax_final.RDS" into taxFinal,taxTableToTable
+                file "tax_final.RDS" into taxFinal,taxtab_to_output
                 file "bootstrap_final.RDS" into bootstrapFinal
 
                 script:
@@ -1175,7 +1201,7 @@ if (params.reference) {
                 file ref from refFile
 
                 output:
-                file "tax_final.RDS" into taxFinal,taxTableToTable
+                file "tax_final.RDS" into taxFinal,taxtab_to_output
                 file "bootstrap_final.RDS" into bootstrapFinal
 
                 script:
@@ -1211,7 +1237,7 @@ if (params.reference) {
             file ref from refFile // this needs to be a database from the IDTAXA site
 
             output:
-            file "tax_final.RDS" into taxFinal,taxTableToTable
+            file "tax_final.RDS" into taxFinal,taxtab_to_output
             file "bootstrap_final.RDS" into bootstrapFinal
             file "raw_idtaxa.RDS"
 
@@ -1274,7 +1300,7 @@ if (params.reference) {
 } else {
     // set tax channels to 'false', do NOT assign taxonomy
     taxFinal = Channel.empty()
-    taxTableToTable = Channel.empty()
+    taxtab_to_output = Channel.empty()
     bootstrapFinal = Channel.empty()
 }
 
@@ -1291,190 +1317,7 @@ if (params.reference) {
 
 /*
  *
- * Step 10: Rename ASVs & Generate seuqence tables
- *
- * A number of downstream programs have issues with sequences as IDs, here we
- * (optionally) rename these
- *
- */
-
-process RenameASVs {
-    tag { "RenameASVs" }
-    publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
-
-    input:
-    file st from seqTableToRename
-    file rawst from rawSeqTableToRename
-
-    output:
-    file "seqtab_final.simple.RDS" into seqTableFinalToBiom,seqTableFinalToTax,seqTableFinalTree,seqTableFinalTracking,seqTableToTable,seqtabToPhyloseq,seqtabToTaxTable
-    file "asvs.${params.idType}.nochim.fna" into seqsToAln, seqsToQIIME2
-    file "readmap.RDS" into readsToRenameTaxIDs // needed for remapping tax IDs
-    file "asvs.${params.idType}.raw.fna"
-
-    script:
-    """
-    #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-    library(digest); packageVersion("digest")
-
-    # read RDS w/ data
-    st <- readRDS("${st}")
-    st.raw <- readRDS("${rawst}")
-
-    # get sequences
-    seqs <- colnames(st)
-    seqs.raw <- colnames(st.raw)
-
-    # get IDs based on idType
-    ids_study <- switch("${params.idType}", simple=paste("ASV", 1:ncol(st), sep = ""),
-                                md5=sapply(colnames(st), digest, algo="md5"))
-    ids_study.raw <- switch("${params.idType}", simple=paste("ASV", 1:ncol(st.raw), sep = ""),
-                                md5=sapply(colnames(st.raw), digest, algo="md5"))
-    
-    # sub IDs
-    colnames(st) <- ids_study
-    colnames(st.raw) <- ids_study.raw
-
-    # generate FASTA
-    seqs.dna <- ShortRead(sread = DNAStringSet(seqs), id = BStringSet(ids_study))
-    # Write out fasta file.
-    writeFasta(seqs.dna, file = 'asvs.${params.idType}.nochim.fna')
-
-    seqs.dna.raw <- ShortRead(sread = DNAStringSet(seqs.raw), id = BStringSet(ids_study.raw))
-    writeFasta(seqs.dna.raw, file = 'asvs.${params.idType}.raw.fna')
-
-    # Write modified data (note we only keep the no-chimera reads for the next stage)
-    saveRDS(st, "seqtab_final.simple.RDS")
-    saveRDS(data.frame(id = ids_study, seq = seqs), "readmap.RDS")
-    """
-}
-
-process GenerateSeqTables {
-    tag { "GenerateSeqTables" }
-    publishDir "${params.outdir}/rds", mode: "link", overwrite: true
-
-    input:
-    file st from seqTableToTable
-
-    output:
-    file "seqtab_final.simple.qiime2.txt" into featuretableToQIIME2
-    file "*.txt"
-
-    script:
-    """
-    #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-
-    seqtab <- readRDS("${st}")
-
-    if (as.logical('${params.sampleRegex}' != FALSE )) {
-        rownames(seqtab) <- gsub('${params.sampleRegex}', "\\\\1", rownames(seqtab), perl = TRUE)
-    }
-
-    # Generate table output
-    write.table(data.frame('SampleID' = row.names(seqtab), seqtab),
-        file = 'seqtab_final.txt',
-        row.names = FALSE,
-        col.names=c('#SampleID', colnames(seqtab)), sep = "\t")
-
-    ######################################################################
-    # Convert to simple table + FASTA, from
-    # https://github.com/LangilleLab/microbiome_helper/blob/master/convert_dada2_out.R#L69
-    ######################################################################
-
-    # Generate OTU table output (rows = samples, cols = ASV)
-    write.table(data.frame('SampleID' = row.names(seqtab), seqtab),
-        file = 'seqtab_final.simple.txt',
-        row.names = FALSE,
-        col.names=c('#SampleID', colnames(seqtab)),
-        sep = "\t")
-
-    # Generate OTU table for QIIME2 import (rows = ASVs, cols = samples)
-    write.table(
-        data.frame('Taxa' = colnames(seqtab), t(seqtab)),
-        file = 'seqtab_final.simple.qiime2.txt',
-        row.names = FALSE,
-        quote=FALSE,
-        sep = "\t")
-
-    # Write modified data
-    saveRDS(seqtab, "seqtab_final.simple.RDS")
-    """
-}
-
-process GenerateTaxTables {
-    tag { "GenerateTaxTables" }
-    publishDir "${params.outdir}/rds", mode: "link", overwrite: true
-
-    input:
-    file tax from taxTableToTable
-    file bt from bootstrapFinal
-    file map from readsToRenameTaxIDs
-
-    output:
-    file "tax_final.simple.RDS" into taxtabToPhyloseq
-    file "tax_final.simple.txt" into taxtableToQIIME2
-    file "*.txt"
-
-    script:
-    """
-    #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-
-    tax <- readRDS("${tax}")
-    map <- readRDS("${map}")
-
-    # Note that we use the old ASV ID for output here
-    write.table(data.frame('ASVID' = row.names(tax), tax),
-        file = 'tax_final.txt',
-        row.names = FALSE,
-        col.names=c('#OTU ID', colnames(tax)), sep = "\t")
-
-    # Tax table
-    if(!identical(rownames(tax), as.character(map\$seq))){
-        stop("sequences in taxa and sequence table are not ordered the same.")
-    }
-
-    tax[is.na(tax)] <- "Unclassified"
-    rownames(tax) <- map\$id
-    taxa_combined <- apply(tax, 1, function(x) paste(x, collapse=";"))
-    taxa_out <- data.frame(names(taxa_combined), taxa_combined)
-    colnames(taxa_out) <- c("#OTU ID", "taxonomy")
-
-    write.table(data.frame('ASVID' = row.names(tax), tax),
-        file = 'tax_final.simple.full.txt',
-        row.names = FALSE,
-        col.names=c('#OTU ID', colnames(tax)), sep = "\t")
-
-    write.table(taxa_out,
-        file = 'tax_final.simple.txt',
-        row.names = FALSE,
-        sep = "\t")
-
-    if (file.exists('bootstrap_final.RDS')) {
-        boots <- readRDS("${bt}")
-        if(!identical(rownames(boots), as.character(map\$seq))){
-            stop("sequences in bootstrap and sequence table are not ordered the same.")
-        }
-        rownames(boots) <- map\$id
-        write.table(data.frame('ASVID' = row.names(boots), boots),
-            file = 'tax_final.bootstraps.simple.full.txt',
-            row.names = FALSE,
-            col.names=c('#OTU ID', colnames(boots)), sep = "\t")
-    }
-
-    # Write modified data
-    saveRDS(tax, "tax_final.simple.RDS")
-    """
-}
-
-/*
- *
- * Step 11: Alignment & Phylogenetic tree
+ * Step 10: Alignment & Phylogenetic tree
  *
  */
 
@@ -1482,7 +1325,7 @@ process GenerateTaxTables {
 // two processes
 // TODO: if PHMM provided, subset the previous alignment to just the retained sequences and output that
 
-if (!params.precheck && params.runTree && params.lengthvar == false) {
+if (params.runTree && params.lengthvar == false) {
 
     if (params.aligner == 'DECIPHER') {
 
@@ -1495,7 +1338,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
             file seqs from seqsToAln
 
             output:
-            file "aligned_seqs.fasta" optional true into alnFile,alnToQIIME2
+            file "aligned_seqs.fasta" optional true into alnFile,aln_to_output
             
             script:
             """
@@ -1566,7 +1409,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
             file aln from alnFile
 
             output:
-            file "fasttree.tree" into treeGTRFile, treeToQIIME2
+            file "fasttree.tree" into treeGTRFile
             // need to deadend the other channels, they're hanging here
 
             script:
@@ -1590,7 +1433,7 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
         file tree from treeGTRFile
 
         output:
-        file "rooted.newick" into rootedTreeFile, rootedToQIIME2
+        file "rooted.newick" into rootedTreeFile, rooted_to_output
         // need to deadend the other channels, they're hanging here
 
         script:
@@ -1608,9 +1451,78 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
     }
 } else {
     // Note these are caught downstream
-    alnToQIIME2 = false
-    treeToQIIME2 = false
-    rootedToQIIME2 = false
+    aln_to_output = false
+    tree_to_output = false
+    rooted_to_output = false
+}
+
+/*
+ *
+ * Step 12: Generate outputs
+ *
+ */
+ 
+process output_unfiltered {
+    tag { "output_unfiltered" }
+    publishDir "${params.outdir}/csv/unfiltered", mode: "link", overwrite: true
+
+    input:
+    file st from seqtab_to_output
+    file samdf from samdf_to_output
+    file tax from taxtab_to_output
+    file bt from bootstrapFinal
+    file tree from rooted_to_output
+    
+    output:
+    file "*.rds"
+    file "*.csv"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(dada2); packageVersion("dada2")
+    library(ShortRead); packageVersion("ShortRead")
+
+    # Read in files
+    seqtab <- readRDS("${st}")
+    tax <- readRDS("${tax}")
+    seqs <- Biostrings::readDNAStringSet("${aln_to_output}")
+    tree <- read.tree(file = "${tree}")
+
+    # Load sample information from channel - Need to add channel at start creating this
+    # If not provided make a new one from a template? - Do this at start?
+    samdf <- read.csv("${samdf}", header=TRUE) %>%
+      filter(!duplicated(sample_id)) %>%
+      magrittr::set_rownames(.$sample_id) 
+    
+    # Create phyloseq object
+    ps <- phyloseq(tax_table(tax),
+                   sample_data(samdf),
+                   otu_table(seqtab, taxa_are_rows = FALSE),
+                   phy_tree(tree),
+                   refseq(seqs))    
+    
+    saveRDS(ps, "ps.rds")
+    
+    #Export raw csv
+    speedyseq::psmelt(ps) %>%
+      filter(Abundance > 0) %>%
+      dplyr::select(-Sample) %>%
+      write_csv("raw_combined.csv")
+  
+    #Export species level summary
+    seqateurs::summarise_taxa(ps, "Species", "sample_id") %>%
+      spread(key="sample_id", value="totalRA") %>%
+      write.csv(file = "spp_sum_unfiltered.csv")
+      
+    #Export genus level summary
+    seqateurs::summarise_taxa(ps, "Genus", "sample_id") %>%
+      spread(key="sample_id", value="totalRA") %>%
+      write.csv(file = "output/results/unfiltered/gen_sum_unfiltered.csv")
+
+    #Output fasta of all ASV's
+    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
+    """
 }
 
 /*
@@ -1620,7 +1532,6 @@ if (!params.precheck && params.runTree && params.lengthvar == false) {
  */
 
 // Broken?: needs a left-join on the initial table
-
 process ReadTracking {
     tag { "ReadTracking" }
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
@@ -1676,7 +1587,6 @@ process ReadTracking {
     """
 }
 
-// TODO: Add phyloseq object
 
 /*
  * Completion e-mail notification
