@@ -263,8 +263,8 @@ if (params.subsample == true) {
 
 // TODO: Put sample_info in here
 // Check if sample file is provided? or else, make a new oe
-process validate_samplesheet {
-    tag { "validate_samplesheet" }
+process create_samdf {
+    tag { "create_samdf" }
     publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
 
     input:
