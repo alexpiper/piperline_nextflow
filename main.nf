@@ -301,8 +301,8 @@ process runMultiQC {
 //    output:
 //    file '*_indexes.txt' into index_files
 //
-//    when:
-//    params.precheck == false
+//    
+//    
 //
 //    script:
 //    """
@@ -322,8 +322,8 @@ process runMultiQC {
 //    output:
 //    file "index_switch_calc.txt" into index_switch
 //
-//    when:
-//    params.precheck == false
+//    
+//    
 //
 //    script:
 //    """
@@ -396,8 +396,8 @@ process Nfilter {
     file "forwardP_rc.fa" into rcfor
     file "reverseP_rc.fa" into rcrev
 
-    when:
-    params.precheck == false
+    
+    
 
     script:
     """
@@ -451,6 +451,7 @@ process Nfilter {
  
 // TODO: Add file renaming to append the primer to both if not present
 // TODO: Swap the demux param for detection of multiple primers in string
+//TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
 if (params.lengthvar == false) {
     process cutadapt {
         tag { "filt_step2_${fastq_id}" }
@@ -462,11 +463,11 @@ if (params.lengthvar == false) {
         file("reverseP.fa") from revprimers
         
         output:
-        set val(fastq_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
-        when:
-        params.precheck == false
+        
+        
 
         script:
         """
@@ -495,12 +496,13 @@ if (params.lengthvar == false) {
             -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
         fi;
+        
+        # Could potentially set a new fastq_id here, then output from env()
         """
     }
 }
 /* Length variable amplicon filtering - Trim both sides*/
 else if (params.lengthvar == true) {
-    //TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
     process cutadapt_var {
         tag { "varfilt_step2_${fastq_id}" }
 
@@ -512,11 +514,11 @@ else if (params.lengthvar == true) {
         file("reverseP_rc.fa") from rcrev
         
         output:
-        set val(fastq_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
-        when:
-        params.precheck == false
+        
+        
 
         script:
         """
@@ -549,6 +551,8 @@ else if (params.lengthvar == true) {
             -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
         fi;
+        
+        # Could potentially set a new fastq_id here?
         """
     }    
 } else {
@@ -577,8 +581,8 @@ process FilterAndTrim {
     file "*.R2.filtered.fastq.gz" optional true into revReads
     file "*.trimmed.txt" into trimTracking
 
-    when:
-    params.precheck == false
+    
+    
 
     script:
     """
@@ -633,9 +637,6 @@ process runFastQC_postfilterandtrim {
     output:
     file '*_fastqc.{zip,html}' into fastqc_files_post
 
-    when:
-    params.precheck == false
-
     """
     fastqc --nogroup -q ${filtFor} ${filtRev}
     """
@@ -654,8 +655,8 @@ process runMultiQC_postfilterandtrim {
     file "*_report.html" into multiqc_report_post
     file "*_data"
 
-    when:
-    params.precheck == false
+    
+    
 
     script:
     interactivePlots = params.interactiveMultiQC == true ? "-ip" : ""
@@ -675,8 +676,8 @@ process mergeTrimmedTable {
     output:
     file "all.trimmed.csv" into trimmedReadTracking
 
-    when:
-    params.precheck == false
+    
+    
 
     script:
     """
@@ -709,9 +710,6 @@ process LearnErrors {
     file "errorsR.RDS" into errorsRev
     file "*.pdf"
     
-    when:
-    params.precheck == false
-
     script:
     """
     #!/usr/bin/env Rscript
@@ -787,9 +785,6 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         file "all.dadaRs.RDS" into dadaRevReadTracking
         file "seqtab.*"
 
-        when:
-        params.precheck == false
-
         script:
         """
         #!/usr/bin/env Rscript
@@ -858,9 +853,6 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         file "all.dadaRs.RDS" into dadaRevReadTracking
         file "seqtab.*"
 
-        when:
-        params.precheck == false
-
         script:
         """
         #!/usr/bin/env Rscript
@@ -904,9 +896,6 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         file "all.dadaFs.RDS" into dadaForReadTracking
         file "all.dadaRs.RDS" into dadaRevReadTracking
 
-        when:
-        params.precheck == false
-
         script:
         '''
         #!/usr/bin/env Rscript
@@ -932,9 +921,6 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         output:
         file "seqtab.RDS" into seqTable,rawSeqTableToRename
         file "all.mergers.RDS" into mergerTracking
-
-        when:
-        params.precheck == false
 
         script:
         '''
@@ -976,9 +962,6 @@ if (params.coding) {
 
         output:
         file "seqtab_final.RDS" into seqTableToTax,seqTableToRename
-
-        when:
-        params.precheck == false
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1059,9 +1042,6 @@ if (params.coding) {
 
         output:
         file "seqtab_final.RDS" into seqTableToTax,seqTableToRename
-
-        when:
-        params.precheck == false
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1156,9 +1136,6 @@ if (params.reference) {
                 file "tax_final.RDS" into taxFinal,taxTableToTable
                 file "bootstrap_final.RDS" into bootstrapFinal
 
-                when:
-                params.precheck == false
-
                 script:
                 """
                 #!/usr/bin/env Rscript
@@ -1201,9 +1178,6 @@ if (params.reference) {
                 file "tax_final.RDS" into taxFinal,taxTableToTable
                 file "bootstrap_final.RDS" into bootstrapFinal
 
-                when:
-                params.precheck == false
-
                 script:
                 taxLevels = params.taxLevels ? "c( ${params.taxLevels} )," : ''
                 """
@@ -1240,9 +1214,6 @@ if (params.reference) {
             file "tax_final.RDS" into taxFinal,taxTableToTable
             file "bootstrap_final.RDS" into bootstrapFinal
             file "raw_idtaxa.RDS"
-
-            when:
-            params.precheck == false
 
             script:
             """
@@ -1391,9 +1362,6 @@ process GenerateSeqTables {
     file "seqtab_final.simple.qiime2.txt" into featuretableToQIIME2
     file "*.txt"
 
-    when:
-    params.precheck == false
-
     script:
     """
     #!/usr/bin/env Rscript
@@ -1450,9 +1418,6 @@ process GenerateTaxTables {
     file "tax_final.simple.RDS" into taxtabToPhyloseq
     file "tax_final.simple.txt" into taxtableToQIIME2
     file "*.txt"
-
-    when:
-    params.precheck == false
 
     script:
     """
@@ -1669,9 +1634,6 @@ process ReadTracking {
 
     output:
     file "all.readtracking.txt"
-
-    when:
-    params.precheck == false
 
     script:
     """
