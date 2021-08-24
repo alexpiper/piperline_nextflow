@@ -55,7 +55,7 @@ done
 # Run dev version
 
 cd /group/pathogens/Alexp/Metabarcoding/test/COI
-/home/ap0y/nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
+nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
 --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
 --reference 'idtaxa_bftrimmed.rds' \
--profile basc --subsample true -resume
+-profile basc --subsample true
