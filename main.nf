@@ -33,7 +33,7 @@ def helpMessage() {
     Mandatory inputs:
       --reads                       Path to input data (must be surrounded with quotes)
       --samplesheet                 SampleSheet.csv file used for the sequencing run (must be surrounded with quotes)
-      --runparam                    RunParameters.xml file from the sequencing run (must be surrounded with quotes)
+      --runparams                    RunParameters.xml file from the sequencing run (must be surrounded with quotes)
       --reference                   Path to taxonomic database to be used for annotation (e.g. gg_13_8_train_set_97.fa.gz) (must be surrounded with quotes)
       --fwdprimer                   Sequence of the forward primer (must be surrounded with quotes)
       --revprimer                   Sequence of the reverse primer (must be surrounded with quotes)
@@ -102,9 +102,17 @@ if (params.help){
 
 //Validate inputs
 
-// if ( params.reference == false ) {
-//     exit 1, "Must set reference database using --reference"
-// }
+if ( params.reference == false ) {
+    exit 1, "Must set reference database using --reference"
+}
+
+if ( params.samplesheet == false ) {
+    exit 1, "Must set samplesheet using --samplesheet"
+}
+
+if ( params.runparams == false ) {
+    exit 1, "Must set runparams using --runparams"
+}
 
 if (params.fwdprimer == false){
     exit 1, "Must set forward primer using --fwdprimer"
@@ -203,7 +211,7 @@ if (params.subsample == true) {
         output:
         tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
         tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
-        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), into samples_to_validate
+        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id) into samples_to_validate
 
         script:
         """
@@ -261,34 +269,32 @@ if (params.subsample == true) {
     }
 }
 
-// TODO: Put sample_info in here
-// Check if sample file is provided? or else, make a new oe
-process create_samdf {
-    tag { "create_samdf" }
-    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
-
-    input:
-    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_to_validate
-    
-    output:
-    file(*.csv) into samdf_to_output
-
-    script:
-    """
-    #!/usr/bin/env Rscript
-    library(seqateurs)
-    library(tidyverse)
-    SampleSheet <- as.character("${params.samplesheet}")
-    runParameters <- as.character("${params.runparam}")
-
-    # Create samplesheet containing samples and run parameters for all runs
-    samdf <- seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4") %>%
-      distinct()
-      
-    #Write out updated sample CSV for use
-    write_csv(samdf, "Sample_info.csv")
-    """
-}
+//process create_samdf {
+//    tag { "create_samdf" }
+//    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
+//
+//    input:
+//    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_to_validate
+//    
+//    output:
+//    file(*.csv) into samdf_to_output
+//
+//    script:
+//    """
+//    #!/usr/bin/env Rscript
+//    library(seqateurs)
+//    library(tidyverse)
+//    SampleSheet <- as.character("${params.samplesheet}")
+//    runParameters <- as.character("${params.runparams}")
+//
+//    # Create samplesheet containing samples and run parameters for all runs
+//    samdf <- seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4") %>%
+//      distinct()
+//      
+//    #Write out updated sample CSV for use
+//    write_csv(samdf, "Sample_info.csv")
+//    """
+//}
 
 /*
  *
@@ -1304,27 +1310,43 @@ if (params.reference) {
     bootstrapFinal = Channel.empty()
 }
 
-// Note: this is currently a text dump.  We've found the primary issue with
-// downstream analysis is getting the data in a form that can be useful as
-// input, and there isn't much consistency with this as of yet.  So for now
-// we're using the spaghetti approach (see what sticks).  Also, we  are running
-// into issues with longer sequences (e.g. concatenated ones) used as IDs with
-// tools like Fasttree (it doesn't seem to like that).
-
-// Safest way may be to save the simpleID -> seqs as a mapping file, use that in
-// any downstream steps (e.g. alignment/tree), then munge the seq names back
-// from the mapping table
-
 /*
  *
  * Step 10: Alignment & Phylogenetic tree
  *
  */
+ 
+process output_asvs {
+    tag { "output_asvs" }
 
-// NOTE: 'when' directive doesn't work if channels have the same name in
-// two processes
-// TODO: if PHMM provided, subset the previous alignment to just the retained sequences and output that
+    input:
+    file st from seqTableToRename
+    file rawst from rawSeqTableToRename
 
+    output:
+    file "asvs.${params.idType}.nochim.fna" into seqsToAln
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(dada2)
+    library(ShortRead)
+    library(digest)
+    
+    # read RDS w/ data
+    st <- readRDS("${st}")
+    
+    # get sequences
+    seqs <- colnames(st)
+   
+    # generate FASTA
+    seqs.dna <- ShortRead(sread = DNAStringSet(seqs), id = BStringSet(ids_study))
+    # Write out fasta file.
+    writeFasta(seqs.dna, file = 'asvs.${params.idType}.nochim.fna')
+    """
+}
+
+// TODO: if PHMM provided, subset the previous PHMM alignment to just the retained sequences and output that?
 if (params.runTree && params.lengthvar == false) {
 
     if (params.aligner == 'DECIPHER') {
