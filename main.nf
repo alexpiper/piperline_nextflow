@@ -212,9 +212,12 @@ log.info "========================================="
  *
  */
 
+// TODO: Add FCID to start if cant find it - Get from runparameters
+// TODO: Parse tuple rather than files to samples_to_validate
 if (params.subsample == true) {
     process subsample_reads {
         tag { "subsample_reads.${fastq_id}" }
+        publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
 
         input:
         tuple fastq_id, file(reads) from samples_ch
@@ -222,8 +225,9 @@ if (params.subsample == true) {
         output:
         tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
         tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
-        tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id) into samples_to_validate
-
+        file ('*fastq_id.txt') into samples_to_validate
+        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz") into samples_to_index
+        
         script:
         """
         #!/bin/bash
@@ -233,7 +237,7 @@ if (params.subsample == true) {
         
         # Get expected positions of elements from read_format
         fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
-        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'sampleid' | cut -d : -f 1 )"
         ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
         pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
         
@@ -263,6 +267,9 @@ if (params.subsample == true) {
             ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
             pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
         fi
+        
+        # write out info for next step 
+        echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
         """
     }
 } else if (params.subsample == false){
@@ -275,7 +282,9 @@ if (params.subsample == true) {
         output:
         tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
         tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
-
+        file ('*fastq_id.txt') into samples_to_validate
+        tuple fastq_id, file("data/*R1_001.fastq.gz") into samples_to_index
+        
         """
         #!/bin/bash
         mkdir data
@@ -284,7 +293,7 @@ if (params.subsample == true) {
         
         # Get expected positions of elements from read_format
         fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
-        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'sampleid' | cut -d : -f 1 )"
         ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
         pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
         
@@ -314,6 +323,9 @@ if (params.subsample == true) {
             ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
             pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
         fi
+        
+        # write out info for next step 
+        echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
         """
     }
 }
@@ -331,11 +343,11 @@ process create_samdf {
     input:
     file(samplesheet) from samplesheet_ch
     file(runparams) from runparams_ch
-    set fastq_id, fcid, sampleid, ext_id, pcr_id from samples_to_validate
+    file(fastq_names) from samples_to_validate.collectFile(name: 'fastq_list.txt', newLine: true)
     
     output:
     file "*.csv" into samdf_to_output
-
+    
     script:
     """
     #!/usr/bin/env Rscript
@@ -349,6 +361,35 @@ process create_samdf {
 
     # Create samplesheet containing samples and run parameters for all runs
     samdf <- dplyr::distinct(seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4"))
+
+    # Check if samples match samplesheet
+    fastqFs <- read_delim("fastq_list.txt", delim=" ", col_names=c("sample_id", "fcid", "sample_name", "extraction_rep", "amp_rep")) %>%
+        dplyr::filter(!stringr::str_detect(sample_id, "Undetermined")) %>%
+        dplyr::mutate(sample_id = str_remove(sample_id, pattern = "(?:.(?!_S))+\$"))
+    
+    #Check missing in samplesheet
+    if (length(setdiff(fastqFs\$sample_id, samdf\$sample_id)) > 0) {warning("The fastq file/s: ", setdiff(fastqFs\$sample_id, samdf\$sample_id), " are not in the sample sheet") }
+
+    #Check missing fastqs
+    if (length(setdiff(samdf\$sample_id, fastqFs)) > 0) {
+      samdf <- samdf %>%
+        filter(!sample_id %in% setdiff(samdf\$sample_id, fastqFs\$sample_id))
+    }
+
+    # Add mising fields
+    samdf <- samdf %>%
+      dplyr::mutate(
+      # Add fcid if not prent
+      sample_id = case_when(
+        !stringr::str_detect(sample_id, fcid) ~ paste0(fcid,"_", sample_id),
+        TRUE ~ sample_id
+      ),
+      for_primer_seq = "${params.fwdprimer}",
+      rev_primer_seq = "${params.revprimer}",
+      pcr_primers = paste0("${params.fwdprimer_name}", "-", "${params.revprimer_name}")
+      ) %>%
+      dplyr::select(-sample_name) %>%
+      seqateurs::coalesce_join(fastqFs, by="sample_id")
 
     #Write out updated sample CSV for use
     write_csv(samdf, "Sample_info.csv")
@@ -366,7 +407,7 @@ process runFastQC {
     publishDir "${params.outdir}/qc/FASTQC-prefilter", mode: "copy", overwrite: true
 
     input:
-    tuple fastq_id, file(For), file(Rev) from samples_to_qual.view()
+    tuple fastq_id, file(For), file(Rev) from samples_to_qual
 
     output:
     file '*_fastqc.{zip,html}' into fastqc_files_ch, fastqc_files2_ch
@@ -396,90 +437,83 @@ process runMultiQC {
     """
 }
 
+// TODO: Add a calc_switchrate to params. only run this if its true. if its true and there are no indexes present, exit
 // Summarise indexes used for each sample
-//process summarise_index {
-//    tag { "summarise_index_${fastq_id}" }
-//
-//    input:
-//    set fastq_id, file(reads) from samples_to_filt
-//
-//    output:
-//    file '*_indexes.txt' into index_files
-//
-//    
-//    
-//
-//    script:
-//    """
-//  #!/bin/bash
-//  zcat "${reads[0]}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${fastq_id}_indexes.txt
-//  done
-//    """
-//}
+process summarise_index {
+    tag { "summarise_index_${fastq_id}" }
+    publishDir "${params.outdir}/qc/sample_indexes", mode: 'copy', overwrite: true
+
+    input:
+    set fastq_id, file(For) from samples_to_index
+
+    output:
+    file "*_indexes.txt" into index_count  
+
+    script:
+    """
+    #!/bin/bash
+    zcat "${For}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${fastq_id}_indexes.txt
+    """
+}
 
 // Calculate switch rate
-//process index_calc {
-//    tag { "index_calc_${fastq_id}" }
-//
-//    input:
-//    file('*_indexes.txt') from index_files.collect()
-//
-//    output:
-//    file "index_switch_calc.txt" into index_switch
-//
-//    
-//    
-//
-//    script:
-//    """
-//  #!/bin/bash
-//  ls | grep '_indexes.txt' | sort > files
-//  grep -v 'Undetermined' files | xargs cat > determined_counts.txt
-//
-//  # Get all potential switched combinations of used indexes
-//  index1=$(cat determined_counts.txt | cut -d' ' -f 2)
-//  index2=$(cat determined_counts.txt | cut -d' ' -f 3)
-//
-//  [ -e all_combinations.txt ] && rm all_combinations.txt
-//  touch all_combinations.txt
-//  for i in ${index1}
-//  do
-//    for j in ${index2}
-//    do
-//      if [ "$i" \< "$j" ]
-//      then
-//       echo $i $j >> all_combinations.txt
-//      fi
-//    done
-//  done
-//
-//  # Count number of undetermined reads
-//  grep 'Undetermined' files | xargs cat > undetermined_counts.txt
-//  cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
-//
-//  # Count number of correctly demultiplexed reads
-//  correct_counts=$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
-//
-//  # Count number of switched reads
-//  comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
-//  switched_counts=$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
-//
-//  # Count number of other reads (these can be sequencing errors, PhiX and other junk)
-//  other_counts=$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += $1} END { print SUM }')
-//
-//  # Calculate switch rate (in percentage)
-//  calc(){ awk "BEGIN { print "$*" }"; }
-//  switch_rate=$(calc $switched_counts/$correct_counts)
-//  switch_rate_perc=$(calc $switched_counts/$correct_counts*100)
-//
-//  # Print results to file
-//  touch index_switch_calc.txt
-//  echo "Correctly demultiplexed reads: ${correct_counts}" >> index_switch_calc.txt
-//  echo "Switched reads: ${switched_counts}" >> index_switch_calc.txt
-//  echo "Other undetermined reads: ${other_counts}" >> index_switch_calc.txt
-//  echo "Index switching rate: ${switch_rate} (${switch_rate_perc}%)" >> index_switch_calc.txt
-//    """
-//}
+process index_calc {
+    tag { "index_calc" }
+    publishDir "${params.outdir}/qc", mode: 'copy', overwrite: true
+
+    input:
+    file('*_indexes.txt') from index_count.collect()
+    
+    output:
+    file "*.txt" into index_switch
+
+    script:
+    """
+    #!/bin/bash
+    ls | grep '_indexes.txt' | sort > files
+    grep -v 'Undetermined' files | xargs cat > determined_counts.txt
+
+    # Get all potential switched combinations of used indexes
+    index1="\$(cat determined_counts.txt | cut -d' ' -f 2)"
+    index2="\$(cat determined_counts.txt | cut -d' ' -f 3)"
+    
+    touch all_combinations.txt
+    for i in \${index1} ; do
+      for j in \${index2} ; do
+        if [ "\${i}" \\< "\${j}" ]
+        then
+         echo \${i} \${j} >> all_combinations.txt
+        fi
+      done
+    done
+        
+    # Count number of undetermined reads
+    grep 'Undetermined' files | xargs cat > undetermined_counts.txt
+    cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
+
+    # Count number of correctly demultiplexed reads
+    correct_counts="\$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
+
+    # Count number of switched reads
+    comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
+    switched_counts="\$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
+
+    # Count number of other reads (these can be sequencing errors, PhiX and other junk)
+    other_counts="\$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
+
+    # Calculate switch rate (in percentage)
+    calc(){ awk "BEGIN { print "\$*" }"; }
+    switch_rate="\$(calc "\${switched_counts}"/"\${correct_counts}")"
+    switch_rate_perc="\$(calc "\${switched_counts}"/"\${correct_counts}"*100)"
+
+    # Print results to file
+    touch index_switch_calc.txt
+    echo Correctly demultiplexed reads: "\${correct_counts}" >> index_switch_calc.txt
+    echo Switched reads: \${switched_counts}" >> index_switch_calc.txt
+    echo Other undetermined reads: "\${other_counts}" >> index_switch_calc.txt
+    echo Index switching rate: "\${switch_rate}" ("\${switch_rate_perc}"%) >> index_switch_calc.txt
+    """
+}
 
 
 /*
@@ -1389,7 +1423,7 @@ process output_asvs {
     """
     #!/usr/bin/env Rscript
     library(dada2)
-    library(ShortRead)
+    library(Biostrings)    
     library(digest)
     
     # read RDS w/ data
@@ -1399,9 +1433,10 @@ process output_asvs {
     seqs <- colnames(st)
    
     # generate FASTA
-    seqs.dna <- ShortRead(sread = DNAStringSet(seqs), id = BStringSet(ids_study))
-    # Write out fasta file.
-    writeFasta(seqs.dna, file = 'asvs.${params.idType}.nochim.fna')
+    seqs.dna <- Biostrings::DNAStringSet(seqs)
+    names(seqs.dna) <- colnames(st)
+    # Write out fasta file
+    Biostrings::writeXStringSet(seqs.dna, filepath = 'asvs.${params.idType}.nochim.fna')
     """
 }
 
@@ -1553,6 +1588,7 @@ process output_unfiltered {
     file tax from taxtab_to_output
     file bt from bootstrapFinal
     file tree from rooted_to_output
+    file aln from aln_to_output
     
     output:
     file "*.rds"
@@ -1561,20 +1597,25 @@ process output_unfiltered {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-
+    library(phyloseq); packageVersion("phyloseq")
+    library(seqateurs); packageVersion("seqateurs")
+    library(tidyverse); packageVersion("tidyverse")
+    library(ape); packageVersion("ape")
+    
     # Read in files
     seqtab <- readRDS("${st}")
+    #Extract start of sample names only
+    rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
+
     tax <- readRDS("${tax}")
-    seqs <- Biostrings::readDNAStringSet("${aln_to_output}")
+    seqs <- Biostrings::readDNAStringSet("${aln}")
     tree <- read.tree(file = "${tree}")
 
     # Load sample information from channel - Need to add channel at start creating this
     # If not provided make a new one from a template? - Do this at start?
     samdf <- read.csv("${samdf}", header=TRUE) %>%
       filter(!duplicated(sample_id)) %>%
-      magrittr::set_rownames(.$sample_id) 
+      magrittr::set_rownames(.\$sample_id) 
     
     # Create phyloseq object
     ps <- phyloseq(tax_table(tax),
@@ -1602,7 +1643,7 @@ process output_unfiltered {
       write.csv(file = "output/results/unfiltered/gen_sum_unfiltered.csv")
 
     #Output fasta of all ASV's
-    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
+    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "species")
     """
 }
 
@@ -1613,59 +1654,59 @@ process output_unfiltered {
  */
 
 // TODO: add the results of the seqtable tracking
-process ReadTracking {
-    tag { "ReadTracking" }
-    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
-
-    input:
-    file trimmedTable from trimmedReadTracking
-    file mergers from mergerTracking
-    file dadaFs from dadaForReadTracking
-    file dadaRs from dadaRevReadTracking
-
-    output:
-    file "all.readtracking.txt"
-
-    script:
-    """
-    #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(dplyr); packageVersion("dplyr")
-
-    getN <- function(x) sum(getUniques(x))
-
-    # the gsub here might be a bit brittle...
-    dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
-    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
-    colnames(dadaFs) <- c("denoisedF")
-    dadaFs\$SampleID <- rownames(dadaFs)
-
-    dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
-    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
-    colnames(dadaRs) <- c("denoisedR")
-    dadaRs\$SampleID <- rownames(dadaRs)
-
-    all.mergers <- readRDS("${mergers}")
-    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
-    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
-    colnames(mergers) <- c("merged")
-    mergers\$SampleID <- rownames(mergers)
-
-    seqtab.nochim <- as.data.frame(rowSums(readRDS("${sTable}")))
-    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
-    colnames(seqtab.nochim) <- c("seqtab.nochim")
-    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
-
-    trimmed <- read.csv("${trimmedTable}")
-
-    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
-    # dropped data in later steps gets converted to NA on the join
-    # these are effectively 0
-    track[is.na(track)] <- 0
-    
-    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
-    """
-}
+//process ReadTracking {
+//    tag { "ReadTracking" }
+//    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
+//
+//    input:
+//    file trimmedTable from trimmedReadTracking
+//    file mergers from mergerTracking
+//    file dadaFs from dadaForReadTracking
+//    file dadaRs from dadaRevReadTracking
+//
+//    output:
+//    file "all.readtracking.txt"
+//
+//    script:
+//    """
+//    #!/usr/bin/env Rscript
+//    library(dada2); packageVersion("dada2")
+//    library(dplyr); packageVersion("dplyr")
+//
+//    getN <- function(x) sum(getUniques(x))
+//
+//    # the gsub here might be a bit brittle...
+//    dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
+//    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
+//    colnames(dadaFs) <- c("denoisedF")
+//    dadaFs\$SampleID <- rownames(dadaFs)
+//
+//    dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
+//    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
+//    colnames(dadaRs) <- c("denoisedR")
+//    dadaRs\$SampleID <- rownames(dadaRs)
+//
+//    all.mergers <- readRDS("${mergers}")
+//    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
+//    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
+//    colnames(mergers) <- c("merged")
+//    mergers\$SampleID <- rownames(mergers)
+//
+//    seqtab.nochim <- as.data.frame(rowSums(readRDS("${sTable}")))
+//    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
+//    colnames(seqtab.nochim) <- c("seqtab.nochim")
+//    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
+//
+//    trimmed <- read.csv("${trimmedTable}")
+//
+//    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
+//    # dropped data in later steps gets converted to NA on the join
+//    # these are effectively 0
+//    track[is.na(track)] <- 0
+//    
+//    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
+//    """
+//}
 
 
 /*
