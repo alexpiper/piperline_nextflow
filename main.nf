@@ -32,8 +32,9 @@ def helpMessage() {
 
     Mandatory inputs:
       --reads                       Path to input data (must be surrounded with quotes)
+      --read_format                 Format of input read filenames. default: "fcid_sampleid_ext_pcr_S_R_L.fastq.gz" (must be surrounded with quotes)
       --samplesheet                 SampleSheet.csv file used for the sequencing run (must be surrounded with quotes)
-      --runparams                    RunParameters.xml file from the sequencing run (must be surrounded with quotes)
+      --runparams                   RunParameters.xml file from the sequencing run (must be surrounded with quotes)
       --reference                   Path to taxonomic database to be used for annotation (e.g. gg_13_8_train_set_97.fa.gz) (must be surrounded with quotes)
       --fwdprimer                   Sequence of the forward primer (must be surrounded with quotes)
       --revprimer                   Sequence of the reverse primer (must be surrounded with quotes)
@@ -207,21 +208,21 @@ log.info "========================================="
 
 /*
  *
- * Step 0: Copy read files and setup samples
+ * Step 0: Copy read files and validate read files
  *
  */
 
 if (params.subsample == true) {
-    process setup_subsample {
-        tag { "subsample.${fastq_id}" }
+    process subsample_reads {
+        tag { "subsample_reads.${fastq_id}" }
 
         input:
         tuple fastq_id, file(reads) from samples_ch
 
         output:
         tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
-        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
-        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id) into samples_to_validate
+        tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
+        tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id) into samples_to_validate
 
         script:
         """
@@ -230,31 +231,50 @@ if (params.subsample == true) {
         seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
         seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
         
-        # Process filepath:
+        # Get expected positions of elements from read_format
+        fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
+        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+        ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+        pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
+        
+        # Check filepaths match input_format  
         if [[ "${fastq_id}" =~ .*"Undetermined".* ]]; then
-          echo "Undetermined reads file."
-          fcid="\$(echo "${fastq_id}" | cut -d'_' -f1)"
-          sample_id="\$(echo "${fastq_id}" | cut -d'_' -f2)"
-          ext_id="ext1"
-          pcr_id="pcr1" 
-        else 
-            fcid="\$(echo "${fastq_id}" | cut -d'_' -f1)"
-            sample_id="\$(echo "${fastq_id}" | cut -d'_' -f2)"
-            ext_id="\$(echo "${fastq_id}" | cut -d'_' -f3)"
-            pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f4)"        
+            echo "Undetermined reads file."
+            # Extract elements                      
+            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+            ext_id="ext1"
+            pcr_id="pcr1"
+        else
+            # Check number of underscores match the read format
+            read_format_start="\$(echo "${params.read_format}" | sed 's/_R.*\$//g')"
+            fmt_split="\$(awk -F"_" '{print NF-1}' <<< "\${read_format_start}")"
+            name_split="\$(awk -F"_" '{print NF-1}' <<< "${fastq_id}")"
+            
+            # if different - exit
+            if [ "\${fmt_split}" -ne "\${name_split}" ]; then
+                echo 'Number of underscores in filename "${fastq_id}" do not match expected read format: "${params.read_format}"'
+                exit 0
+            fi
+            
+            # Extract elements
+            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+            ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
+            pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
         fi
         """
     }
 } else if (params.subsample == false){
-    process setup {
-        tag { "setup.${fastq_id}" }
+    process validate_reads {
+        tag { "validate_reads.${fastq_id}" }
 
         input:
         tuple fastq_id, file(reads) from samples_ch
 
         output:
         tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
-        tuple fastq_id, env(fcid), env(sample_id), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
+        tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
 
         """
         #!/bin/bash
@@ -262,18 +282,37 @@ if (params.subsample == true) {
         cp ${reads[0]} data/${fastq_id}_R1_001.fastq.gz
         cp ${reads[1]} data/${fastq_id}_R2_001.fastq.gz
         
-        # Process filepath:
+        # Get expected positions of elements from read_format
+        fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
+        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+        ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+        pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
+        
+        # Check filepaths match input_format  
         if [[ "${fastq_id}" =~ .*"Undetermined".* ]]; then
-          echo "Undetermined reads file."
-          fcid="\$(echo "${fastq_id}" | cut -d'_' -f1)"
-          sample_id="\$(echo "${fastq_id}" | cut -d'_' -f2)"
-          ext_id="ext1"
-          pcr_id="pcr1" 
-        else 
-            fcid="\$(echo "${fastq_id}" | cut -d'_' -f1)"
-            sample_id="\$(echo "${fastq_id}" | cut -d'_' -f2)"
-            ext_id="\$(echo "${fastq_id}" | cut -d'_' -f3)"
-            pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f4)"        
+            echo "Undetermined reads file."
+            # Extract elements                      
+            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+            ext_id="ext1"
+            pcr_id="pcr1"
+        else
+            # Check number of underscores match the read format
+            read_format_start="\$(echo "${params.read_format}" | sed 's/_R.*\$//g')"
+            fmt_split="\$(awk -F"_" '{print NF-1}' <<< "\${read_format_start}")"
+            name_split="\$(awk -F"_" '{print NF-1}' <<< "${fastq_id}")"
+            
+            # if different - exit
+            if [ "\${fmt_split}" -ne "\${name_split}" ]; then
+                echo 'Number of underscores in filename "${fastq_id}" do not match expected read format: "${params.read_format}"'
+                exit 0
+            fi
+            
+            # Extract elements
+            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+            ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
+            pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
         fi
         """
     }
@@ -292,7 +331,7 @@ process create_samdf {
     input:
     file(samplesheet) from samplesheet_ch
     file(runparams) from runparams_ch
-    set fastq_id, fcid, sample_id, ext_id, pcr_id from samples_to_validate
+    set fastq_id, fcid, sampleid, ext_id, pcr_id from samples_to_validate
     
     output:
     file "*.csv" into samdf_to_output
@@ -327,7 +366,7 @@ process runFastQC {
     publishDir "${params.outdir}/qc/FASTQC-prefilter", mode: "copy", overwrite: true
 
     input:
-    tuple fastq_id, file(For), file(Rev) from samples_to_qual
+    tuple fastq_id, file(For), file(Rev) from samples_to_qual.view()
 
     output:
     file '*_fastqc.{zip,html}' into fastqc_files_ch, fastqc_files2_ch
@@ -452,10 +491,10 @@ process Nfilter {
     tag { "nfilter_${fastq_id}" }
 
     input:
-    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_to_filt
+    set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from samples_to_filt
     
     output:
-    set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}.R[12].noN.fastq.gz" optional true into filt_step2
+    set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}.R[12].noN.fastq.gz" optional true into filt_step2
     set val(fastq_id), "${fastq_id}.out.RDS" into filt_step3Trimming // needed for join() later
     file "forwardP.fa" into forprimers
     file "reverseP.fa" into revprimers
@@ -520,13 +559,13 @@ if (params.lengthvar == false) {
         tag { "filt_step2_${fastq_id}" }
 
         input:
-        set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from filt_step2
+        set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
 
         file("forwardP.fa") from forprimers
         file("reverseP.fa") from revprimers
         
         output:
-        set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
         script:
@@ -567,14 +606,14 @@ else if (params.lengthvar == true) {
         tag { "varfilt_step2_${fastq_id}" }
 
         input:
-        set set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from filt_step2
+        set set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
         file("forwardP.fa") from forprimers
         file("reverseP.fa") from revprimers
         file("forwardP_rc.fa") from rcfor
         file("reverseP_rc.fa") from rcrev
         
         output:
-        set val(fastq_id), val(fcid), val(sample_id), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+        set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
         file "*.cutadapt.out" into cutadaptToMultiQC
 
         script:
@@ -630,7 +669,7 @@ process FilterAndTrim {
     tag { "filt_step3_${fastq_id}" }
 
     input:
-    set fastq_id, fcid, sample_id, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
+    set fastq_id, fcid, sampleid, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
 
     output:
     set val(fastq_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
