@@ -147,6 +147,16 @@ Channel
     .fromFilePairs( params.reads )
     .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
     .set { samples_ch }
+    
+Channel
+    .fromPath( params.samplesheet )
+    .ifEmpty { error "Cannot find any sample sheet matching: ${params.samplesheet}" }
+    .set { samplesheet_ch }
+    
+Channel
+    .fromPath( params.runparams )
+    .ifEmpty { error "Cannot find any runparameters file matching: ${params.runparams}" }
+    .set { runparams_ch }
 
 // Header log info
 log.info "==================================="
@@ -269,32 +279,42 @@ if (params.subsample == true) {
     }
 }
 
-//process create_samdf {
-//    tag { "create_samdf" }
-//    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
-//
-//    input:
-//    set fastq_id, fcid, sample_id, ext_id, pcr_id, reads from samples_to_validate
-//    
-//    output:
-//    file(*.csv) into samdf_to_output
-//
-//    script:
-//    """
-//    #!/usr/bin/env Rscript
-//    library(seqateurs)
-//    library(tidyverse)
-//    SampleSheet <- as.character("${params.samplesheet}")
-//    runParameters <- as.character("${params.runparams}")
-//
-//    # Create samplesheet containing samples and run parameters for all runs
-//    samdf <- seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4") %>%
-//      distinct()
-//      
-//    #Write out updated sample CSV for use
-//    write_csv(samdf, "Sample_info.csv")
-//    """
-//}
+/*
+ *
+ * Step b: create samplesheet
+ *
+ */
+
+process create_samdf {
+    tag { "create_samdf" }
+    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
+
+    input:
+    file(samplesheet) from samplesheet_ch
+    file(runparams) from runparams_ch
+    set fastq_id, fcid, sample_id, ext_id, pcr_id from samples_to_validate
+    
+    output:
+    file "*.csv" into samdf_to_output
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(seqateurs)
+    library(tidyverse)
+    SampleSheet <- normalizePath( "${samplesheet}")
+    runParameters <- normalizePath( "${runparams}")
+    
+    print(SampleSheet)
+    print(runParameters)
+
+    # Create samplesheet containing samples and run parameters for all runs
+    samdf <- dplyr::distinct(seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4"))
+
+    #Write out updated sample CSV for use
+    write_csv(samdf, "Sample_info.csv")
+    """
+}
 
 /*
  *
@@ -610,7 +630,7 @@ process FilterAndTrim {
     tag { "filt_step3_${fastq_id}" }
 
     input:
-    set fastq_id, fcid, sample_id, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming).view()
+    set fastq_id, fcid, sample_id, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
 
     output:
     set val(fastq_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
@@ -993,7 +1013,7 @@ if (params.coding) {
         file st from seqTable
 
         output:
-        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename
+        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename,seqtab_to_output
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1073,7 +1093,7 @@ if (params.coding) {
         file st from seqTable
 
         output:
-        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename
+        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename,seqtab_to_output
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1553,14 +1573,13 @@ process output_unfiltered {
  *
  */
 
-// Broken?: needs a left-join on the initial table
+// TODO: add the results of the seqtable tracking
 process ReadTracking {
     tag { "ReadTracking" }
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
     file trimmedTable from trimmedReadTracking
-    file sTable from seqTableFinalTracking
     file mergers from mergerTracking
     file dadaFs from dadaForReadTracking
     file dadaRs from dadaRevReadTracking
