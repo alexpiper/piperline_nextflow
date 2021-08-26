@@ -45,8 +45,10 @@ def helpMessage() {
 
     Optional inputs:
       --interop                     Path to InterOp directory from the sequencing run (must be surrounded with quotes)
+      --calc_switchrate             Option to calculate index switching rate using undetermined reads (default true)
+      --process_undetermined        Whether to infer ASVs for undetermined reads (default false)
 
-    All available read preparation parameters:
+    All available read filtering parameters:
       --trimFor                     integer. The number of nucleotides to remove from the start of read 1
       --trimRev                     integer. The number of nucleotides to remove from the start of read 2
       --truncFor                    integer. truncate read1 here (i.e. if you want to trim 10bp off the end of a 250bp R1, truncFor should be set to 240). enforced before trimFor/trimRev
@@ -74,7 +76,7 @@ def helpMessage() {
       --idType                      The ASV IDs are renamed to simplify downstream analysis, in particular with downstream tools.  The
                                     default is "ASV", which simply renames the sequences in sequencial order.  Alternatively, this can be
                                     set to "md5" which will run MD5 on the sequence and generate a QIIME2-like unique hash.
-      --subsample                   subsample a random 10,000 reads to speed up process of testing
+      --subsample                   subsample a random number of sequencing reads from each fastq.
 
     Help:
       --help                        Will print out summary above when executing nextflow run alexpiper/piperline
@@ -214,10 +216,9 @@ log.info "========================================="
 
 // TODO: Add FCID to start if cant find it - Get from runparameters
 // TODO: Parse tuple rather than files to samples_to_validate
-if (params.subsample == true) {
+if (params.subsample) {
     process subsample_reads {
         tag { "subsample_reads.${fastq_id}" }
-        publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
 
         input:
         tuple fastq_id, file(reads) from samples_ch
@@ -232,8 +233,8 @@ if (params.subsample == true) {
         """
         #!/bin/bash
         mkdir data
-        seqtk sample -s100 ${reads[0]} 10000 | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
-        seqtk sample -s100 ${reads[1]} 10000 | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
+        seqtk sample -s100 ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
+        seqtk sample -s100 ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
         
         # Get expected positions of elements from read_format
         fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
@@ -437,82 +438,98 @@ process runMultiQC {
     """
 }
 
-// TODO: Add a calc_switchrate to params. only run this if its true. if its true and there are no indexes present, exit
-// Summarise indexes used for each sample
-process summarise_index {
-    tag { "summarise_index_${fastq_id}" }
-    publishDir "${params.outdir}/qc/sample_indexes", mode: 'copy', overwrite: true
+// TODO add a filter on collectFile instead of outputting empty undetermined_counts.txt files
+if (params.calc_switchrate == true) {
+    // Summarise indexes used for each sample
+    process summarise_index {
+        tag { "summarise_index_${fastq_id}" }
 
-    input:
-    set fastq_id, file(For) from samples_to_index
+        input:
+        set fastq_id, file(For) from samples_to_index
 
-    output:
-    file "*_indexes.txt" into index_count  
+        output:
+        file "*_indexes.txt" into index_count
+        file "*_undetermined.txt" into undetermined_counts
 
-    script:
-    """
-    #!/bin/bash
-    zcat "${For}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${fastq_id}_indexes.txt
-    """
-}
-
-// Calculate switch rate
-process index_calc {
-    tag { "index_calc" }
-    publishDir "${params.outdir}/qc", mode: 'copy', overwrite: true
-
-    input:
-    file('*_indexes.txt') from index_count.collect()
+        script:
+        """
+        #!/bin/bash        
+        if [[ "${fastq_id}" =~ .*"Undetermined".* ]]; then
+            echo "Undetermined reads file."
+            zcat "${For}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${fastq_id}_undetermined.txt
+            touch ${fastq_id}_indexes.txt
+        else
+            zcat "${For}" | grep '^@M' | rev | cut -d':' -f 1 | rev | sort | uniq -c | sort -nr  | sed 's/+/ /' | sed 's/^ *//g' > ${fastq_id}_indexes.txt
+            touch ${fastq_id}_undetermined.txt
+        fi   
+        """
+    }
+    // Calculate switch rate
+    process index_calc {
+        tag { "index_calc" }
+        publishDir "${params.outdir}/qc", mode: 'copy', overwrite: true
     
-    output:
-    file "*.txt" into index_switch
-
-    script:
-    """
-    #!/bin/bash
-    ls | grep '_indexes.txt' | sort > files
-    grep -v 'Undetermined' files | xargs cat > determined_counts.txt
-
-    # Get all potential switched combinations of used indexes
-    index1="\$(cat determined_counts.txt | cut -d' ' -f 2)"
-    index2="\$(cat determined_counts.txt | cut -d' ' -f 3)"
-    
-    touch all_combinations.txt
-    for i in \${index1} ; do
-      for j in \${index2} ; do
-        if [ "\${i}" \\< "\${j}" ]
-        then
-         echo \${i} \${j} >> all_combinations.txt
-        fi
-      done
-    done
+        input:
+        file(indexes) from index_count.collectFile(name: 'determined_counts.txt', newLine: true)
+        file(undetermined) from undetermined_counts.collectFile(name: 'undetermined_counts.txt', newLine: true)
         
-    # Count number of undetermined reads
-    grep 'Undetermined' files | xargs cat > undetermined_counts.txt
-    cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
-
-    # Count number of correctly demultiplexed reads
-    correct_counts="\$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
-
-    # Count number of switched reads
-    comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
-    switched_counts="\$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
-
-    # Count number of other reads (these can be sequencing errors, PhiX and other junk)
-    other_counts="\$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
-
-    # Calculate switch rate (in percentage)
-    calc(){ awk "BEGIN { print "\$*" }"; }
-    switch_rate="\$(calc "\${switched_counts}"/"\${correct_counts}")"
-    switch_rate_perc="\$(calc "\${switched_counts}"/"\${correct_counts}"*100)"
-
-    # Print results to file
-    touch index_switch_calc.txt
-    echo Correctly demultiplexed reads: "\${correct_counts}" >> index_switch_calc.txt
-    echo Switched reads: \${switched_counts}" >> index_switch_calc.txt
-    echo Other undetermined reads: "\${other_counts}" >> index_switch_calc.txt
-    echo Index switching rate: "\${switch_rate}" ("\${switch_rate_perc}"%) >> index_switch_calc.txt
-    """
+        output:
+        file "index_switch_calc.txt"
+    
+        script:
+        """
+        #!/bin/bash
+        
+        # Remove empty lines of collated files
+        sed -i '/^\$/d' determined_counts.txt
+        sed -i '/^\$/d' undetermined_counts.txt
+        
+        # Get all potential switched combinations of used indexes
+        index1="\$(cat determined_counts.txt | cut -d' ' -f 2)"
+        index2="\$(cat determined_counts.txt | cut -d' ' -f 3)"
+        
+        # get all possible combinations of determined indexes
+        touch all_combinations.txt
+        for i in \${index1} ; do
+          for j in \${index2} ; do
+            if [ "\${i}" \\< "\${j}" ]
+            then
+             echo \${i} \${j} >> all_combinations.txt
+            fi
+          done
+        done
+            
+        # Count number of undetermined reads
+        cat undetermined_counts.txt | cut -d' ' -f 2,3 > undetermined_index.txt
+    
+        # Count number of correctly demultiplexed reads
+        correct_counts="\$(cat determined_counts.txt | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
+    
+        # Count number of switched reads
+        comm -12 <(sort all_combinations.txt) <(sort undetermined_index.txt) > switched_indexes.txt
+        switched_counts="\$(grep -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
+    
+        # Count number of other reads (these can be sequencing errors, PhiX and other junk)
+        other_counts="\$(grep -v -f "switched_indexes.txt" "undetermined_counts.txt" | cut -d' ' -f 1 | awk '{ SUM += \$1} END { print SUM }')"
+    
+        # Calculate switch rate (in percentage)
+        calc(){ awk "BEGIN { print "\$*" }"; }
+        switch_rate="\$(calc "\${switched_counts}"/"\${correct_counts}")"
+        switch_rate_perc="\$(calc "\${switched_counts}"/"\${correct_counts}"*100)"
+    
+        # Print results to file
+        touch index_switch_calc.txt
+        echo Correctly demultiplexed reads: "\${correct_counts}" >> index_switch_calc.txt
+        echo Switched reads: "\${switched_counts}" >> index_switch_calc.txt
+        echo Other undetermined reads: "\${other_counts}" >> index_switch_calc.txt
+        echo Index switching rate: "\${switch_rate}" \\("\${switch_rate_perc}"%\\) >> index_switch_calc.txt
+        """
+    }
+}
+else if (params.calc_switchrate == false) {
+    // Set channels to empty
+    index_count = Channel.empty()
+    undetermined_counts = Channel.empty()
 }
 
 
@@ -1580,7 +1597,7 @@ if (params.runTree && params.lengthvar == false) {
  
 process output_unfiltered {
     tag { "output_unfiltered" }
-    publishDir "${params.outdir}/csv/unfiltered", mode: "link", overwrite: true
+    publishDir "${params.outdir}/results/unfiltered", mode: "link", overwrite: true
 
     input:
     file st from seqtab_to_output
@@ -1618,7 +1635,7 @@ process output_unfiltered {
       magrittr::set_rownames(.\$sample_id) 
     
     # Create phyloseq object
-    ps <- phyloseq(tax_table(tax),
+    ps <- phyloseq(tax_table(tax), 
                    sample_data(samdf),
                    otu_table(seqtab, taxa_are_rows = FALSE),
                    phy_tree(tree),
@@ -1633,14 +1650,14 @@ process output_unfiltered {
       write_csv("raw_combined.csv")
   
     #Export species level summary
-    seqateurs::summarise_taxa(ps, "Species", "sample_id") %>%
+    seqateurs::summarise_taxa(ps, "species", "sample_id") %>%
       spread(key="sample_id", value="totalRA") %>%
       write.csv(file = "spp_sum_unfiltered.csv")
       
     #Export genus level summary
-    seqateurs::summarise_taxa(ps, "Genus", "sample_id") %>%
+    seqateurs::summarise_taxa(ps, "genus", "sample_id") %>%
       spread(key="sample_id", value="totalRA") %>%
-      write.csv(file = "output/results/unfiltered/gen_sum_unfiltered.csv")
+      write.csv(file = "gen_sum_unfiltered.csv")
 
     #Output fasta of all ASV's
     seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "species")
