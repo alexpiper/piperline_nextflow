@@ -46,9 +46,8 @@ def helpMessage() {
     Optional inputs:
       --interop                     Path to InterOp directory from the sequencing run (must be surrounded with quotes)
       --calc_switchrate             Option to calculate index switching rate using undetermined reads (default true)
-      --process_undetermined        Whether to infer ASVs for undetermined reads (default false)
 
-    All available read filtering parameters:
+    Read filtering parameters:
       --trimFor                     integer. The number of nucleotides to remove from the start of read 1
       --trimRev                     integer. The number of nucleotides to remove from the start of read 2
       --truncFor                    integer. truncate read1 here (i.e. if you want to trim 10bp off the end of a 250bp R1, truncFor should be set to 240). enforced before trimFor/trimRev
@@ -64,33 +63,41 @@ def helpMessage() {
       --maxMismatch                 integer. The maximum mismatches allowed in the overlap region; default=0
       --trimOverhang                {"T","F"}. If "T" (true), "overhangs" in the alignment between R1 and R2 are trimmed off.
                                     "Overhangs" are when R2 extends past the start of R1, and vice-versa, as can happen when reads are longer than the amplicon and read into the other-direction                                               primer region. Default="F" (false)
-
-    Other arguments:
-      --dadaOpt.XXX                 Set as e.g. --dadaOpt.HOMOPOLYMER_GAP_PENALTY=-1 Global defaults for the dada function, see ?setDadaOpt in R for available options and their defaults
-      --pool                        Should sample pooling be used to aid identification of low-abundance ASVs? Options are
-                                    pseudo pooling: "pseudo", true: "T", false: "F"
-      --outdir                      The output directory where the results will be saved
-      --email                       Set this parameter to your e-mail address to get a summary e-mail with details of the run
-                                    sent to you when the workflow exits
-      -name                         Name for the pipeline run. If not specified, Nextflow will automatically generate a random mnemonic.
-      --idType                      The ASV IDs are renamed to simplify downstream analysis, in particular with downstream tools.  The
-                                    default is "ASV", which simply renames the sequences in sequencial order.  Alternatively, this can be
-                                    set to "md5" which will run MD5 on the sequence and generate a QIIME2-like unique hash.
-      --subsample                   subsample a random number of sequencing reads from each fastq.
-
-    Help:
-      --help                        Will print out summary above when executing nextflow run alexpiper/piperline
-
+                                    
     Merging arguments (optional):
       --minOverlap                  The minimum length of the overlap required for merging R1 and R2; default=20 (dada2 package default=12)
       --maxMismatch                 The maximum mismatches allowed in the overlap region; default=0.
       --trimOverhang                If "T" (true), "overhangs" in the alignment between R1 and R2 are trimmed off. "Overhangs" are when R2 extends past the start of R1, and vice-versa, as can happen
                                     when reads are longer than the amplicon and read into the other-direction primer region. Default="F" (false)
       --minMergedLen                Minimum length of fragment *after* merging
-      --maxMergedLen                Maximum length of fragment *after* merging
+      --maxMergedLen                Maximum length of fragment *after* merging                              
 
     Taxonomic arguments (optional):
-      --species                     Specify path to fasta file. See dada2 addSpecies() for more detail.
+      --species                     Specify path to fasta file. See dada2 addSpecies() for more detail.  
+      
+    Sample and taxon filtering parameters (optional):
+      --min_sample_reads            integer. The minimum number of reads a sample must have to be retained
+      --phylum                      semicolon delimited string indicating the phyla to retain
+      --order                       semicolon delimited string indicating the orders to retain
+      --family                      semicolon delimited string indicating the families to retain
+      --genus                       semicolon delimited string indicating the genera to retain
+
+    Other arguments (optional):
+      --dadaOpt.XXX                 Set as e.g. --dadaOpt.HOMOPOLYMER_GAP_PENALTY=-1 Global defaults for the dada function, see ?setDadaOpt in R for available options and their defaults
+      --subsample                   subsample a random number of sequencing reads from each fastq.
+      --pool                        Should sample pooling be used to aid identification of low-abundance ASVs? Options are
+                                    pseudo pooling: "pseudo", true: "T", false: "F"
+      --outdir                      The output directory where the results will be saved
+      --email                       Set this parameter to your e-mail address to get a summary e-mail with details of the run
+                                    sent to you when the workflow exits
+      -name                         Name for the pipeline run. If not specified, Nextflow will automatically generate a random mnemonic.
+
+    Help:
+      --help                        Will print out summary above when executing nextflow run alexpiper/piperline
+
+
+
+
     """.stripIndent()
 }
 
@@ -150,7 +157,7 @@ Channel
     .fromFilePairs( params.reads )
     .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
     .set { samples_ch }
-    
+        
 Channel
     .fromPath( params.samplesheet )
     .ifEmpty { error "Cannot find any sample sheet matching: ${params.samplesheet}" }
@@ -216,124 +223,76 @@ log.info "========================================="
 
 // TODO: Add FCID to start if cant find it - Get from runparameters
 // TODO: Parse tuple rather than files to samples_to_validate
-if (params.subsample) {
-    process subsample_reads {
-        tag { "subsample_reads.${fastq_id}" }
 
-        input:
-        tuple fastq_id, file(reads) from samples_ch
+process validate_reads {
+    tag { "validate_reads.${fastq_id}" }
 
-        output:
-        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
-        tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
-        file ('*fastq_id.txt') into samples_to_validate
-        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz") into samples_to_index
-        
-        script:
-        """
-        #!/bin/bash
-        mkdir data
-        seqtk sample -s100 ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
-        seqtk sample -s100 ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
-        
-        # Get expected positions of elements from read_format
-        fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
-        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'sampleid' | cut -d : -f 1 )"
-        ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
-        pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
-        
-        # Check filepaths match input_format  
-        if [[ "${fastq_id}" =~ .*"Undetermined".* ]]; then
-            echo "Undetermined reads file."
-            # Extract elements                      
-            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
-            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
-            ext_id="ext1"
-            pcr_id="pcr1"
-        else
-            # Check number of underscores match the read format
-            read_format_start="\$(echo "${params.read_format}" | sed 's/_R.*\$//g')"
-            fmt_split="\$(awk -F"_" '{print NF-1}' <<< "\${read_format_start}")"
-            name_split="\$(awk -F"_" '{print NF-1}' <<< "${fastq_id}")"
-            
-            # if different - exit
-            if [ "\${fmt_split}" -ne "\${name_split}" ]; then
-                echo 'Number of underscores in filename "${fastq_id}" do not match expected read format: "${params.read_format}"'
-                exit 0
-            fi
-            
-            # Extract elements
-            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
-            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
-            ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
-            pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
-        fi
-        
-        # write out info for next step 
-        echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
-        """
-    }
-} else if (params.subsample == false){
-    process validate_reads {
-        tag { "validate_reads.${fastq_id}" }
+    input:
+    tuple fastq_id, file(reads) from samples_ch
 
-        input:
-        tuple fastq_id, file(reads) from samples_ch
-
-        output:
-        tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
-        tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
-        file ('*fastq_id.txt') into samples_to_validate
-        tuple fastq_id, file("data/*R1_001.fastq.gz") into samples_to_index
-        
-        """
-        #!/bin/bash
-        mkdir data
+    output:
+    tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz"), file("data/${fastq_id}_R2_001.fastq.gz") into samples_to_qual
+    tuple fastq_id, env(fcid), env(sampleid), env(ext_id), env(pcr_id), file("data/*R[12]_001.fastq.gz") into samples_to_filt
+    file ('*fastq_id.txt') into samples_to_validate
+    tuple fastq_id, file("data/${fastq_id}_R1_001.fastq.gz") into samples_to_index
+    
+    script:
+    """
+    #!/bin/bash
+    mkdir data
+    
+    # Subsample if a value has been provided to params.subsample
+    if [ -z "${params.subsample}" ]
+    then
         cp ${reads[0]} data/${fastq_id}_R1_001.fastq.gz
         cp ${reads[1]} data/${fastq_id}_R2_001.fastq.gz
+    else
+        seqtk sample -s100 ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
+        seqtk sample -s100 ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
+    fi  
+    
+    # Get expected positions of elements from read_format
+    fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
+    sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'sampleid' | cut -d : -f 1 )"
+    ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
+    pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
+    
+    # Check filepaths match input_format  
+    if [[ "${fastq_id}" =~ .*"Undetermined".* ]]; then
+        echo "Undetermined reads file."
+        # Extract elements                      
+        fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+        sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+        ext_id="ext1"
+        pcr_id="pcr1"
+    else
+        # Check number of underscores match the read format
+        read_format_start="\$(echo "${params.read_format}" | sed 's/_R.*\$//g')"
+        fmt_split="\$(awk -F"_" '{print NF-1}' <<< "\${read_format_start}")"
+        name_split="\$(awk -F"_" '{print NF-1}' <<< "${fastq_id}")"
         
-        # Get expected positions of elements from read_format
-        fcid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -n 'fcid' | cut -d : -f 1 )"
-        sampleid_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'sampleid' | cut -d : -f 1 )"
-        ext_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'ext' | cut -d : -f 1 )"
-        pcr_pos="\$(echo "${params.read_format}" | tr '_' '\n' | grep -Fxn 'pcr' | cut -d : -f 1 )"
-        
-        # Check filepaths match input_format  
-        if [[ "${fastq_id}" =~ .*"Undetermined".* ]]; then
-            echo "Undetermined reads file."
-            # Extract elements                      
-            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
-            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
-            ext_id="ext1"
-            pcr_id="pcr1"
-        else
-            # Check number of underscores match the read format
-            read_format_start="\$(echo "${params.read_format}" | sed 's/_R.*\$//g')"
-            fmt_split="\$(awk -F"_" '{print NF-1}' <<< "\${read_format_start}")"
-            name_split="\$(awk -F"_" '{print NF-1}' <<< "${fastq_id}")"
-            
-            # if different - exit
-            if [ "\${fmt_split}" -ne "\${name_split}" ]; then
-                echo 'Number of underscores in filename "${fastq_id}" do not match expected read format: "${params.read_format}"'
-                exit 0
-            fi
-            
-            # Extract elements
-            fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
-            sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
-            ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
-            pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
+        # if different - exit
+        if [ "\${fmt_split}" -ne "\${name_split}" ]; then
+            echo 'Number of underscores in filename "${fastq_id}" do not match expected read format: "${params.read_format}"'
+            exit 0
         fi
         
-        # write out info for next step 
-        echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
-        """
-    }
+        # Extract elements
+        fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+        sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+        ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
+        pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
+    fi
+    
+    # write out info for next step 
+    echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
+    """
 }
+
 
 /*
  *
- * Step b: create samplesheet
+ * Step 0b: create samplesheet
  *
  */
 
@@ -438,7 +397,7 @@ process runMultiQC {
     """
 }
 
-// TODO add a filter on collectFile instead of outputting empty undetermined_counts.txt files
+// TODO add a filter on _indexes.txt before collectFile instead of outputting empty undetermined_counts.txt files
 if (params.calc_switchrate == true) {
     // Summarise indexes used for each sample
     process summarise_index {
@@ -542,7 +501,7 @@ process Nfilter {
     tag { "nfilter_${fastq_id}" }
 
     input:
-    set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from samples_to_filt
+    tuple fastq_id, fcid, sampleid, ext_id, pcr_id, reads from samples_to_filt.filter { !it[0].contains('Undetermined') }
     
     output:
     set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}.R[12].noN.fastq.gz" optional true into filt_step2
@@ -740,7 +699,7 @@ process FilterAndTrim {
     fastqFs <- fastqFs[!stringr::str_detect(fastqFs, "unknown")]
     fastqRs <- sort(list.files(pattern="*.R2.cutadapt.fastq.gz"))
     fastqRs <- fastqRs[!stringr::str_detect(fastqRs, "unknown")]
-
+    
     out1 <- readRDS("${trimming}")
     out2 <- filterAndTrim(
                         fwd = fastqFs,
@@ -801,9 +760,6 @@ process runMultiQC_postfilterandtrim {
     file "*_report.html" into multiqc_report_post
     file "*_data"
 
-    
-    
-
     script:
     interactivePlots = params.interactiveMultiQC == true ? "-ip" : ""
     """
@@ -820,10 +776,7 @@ process mergeTrimmedTable {
     file trimData from trimTracking.collect()
 
     output:
-    file "all.trimmed.csv" into trimmedReadTracking
-
-    
-    
+    file "all.trimmed.csv" into trimmed_read_tracking
 
     script:
     """
@@ -926,9 +879,9 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         output:
         file "seqtab.RDS" into seqTable,rawSeqTableToRename
-        file "all.mergers.RDS" into mergerTracking
-        file "all.dadaFs.RDS" into dadaForReadTracking
-        file "all.dadaRs.RDS" into dadaRevReadTracking
+        file "all.mergers.RDS" into merged_read_tracking
+        file "all.dadaFs.RDS" into dada_for_read_tracking
+        file "all.dadaRs.RDS" into dada_rev_read_tracking
         file "seqtab.*"
 
         script:
@@ -994,9 +947,9 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         output:
         file "seqtab.RDS" into seqTable
-        file "all.mergers.RDS" into mergerTracking
-        file "all.dadaFs.RDS" into dadaForReadTracking
-        file "all.dadaRs.RDS" into dadaRevReadTracking
+        file "all.mergers.RDS" into merged_read_tracking
+        file "all.dadaFs.RDS" into dada_for_read_tracking
+        file "all.dadaRs.RDS" into dada_rev_read_tracking
         file "seqtab.*"
 
         script:
@@ -1039,8 +992,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         file dadaRs from dadaRev.collect()
 
         output:
-        file "all.dadaFs.RDS" into dadaForReadTracking
-        file "all.dadaRs.RDS" into dadaRevReadTracking
+        file "all.dadaFs.RDS" into dada_for_read_tracking
+        file "all.dadaRs.RDS" into dada_rev_read_tracking
 
         script:
         '''
@@ -1065,7 +1018,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         output:
         file "seqtab.RDS" into seqTable,rawSeqTableToRename
-        file "all.mergers.RDS" into mergerTracking
+        file "all.mergers.RDS" into merged_read_tracking
 
         script:
         '''
@@ -1103,7 +1056,7 @@ if (params.coding) {
         file st from seqTable
 
         output:
-        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename,seqtab_to_output
+        file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1183,7 +1136,7 @@ if (params.coding) {
         file st from seqTable
 
         output:
-        file "seqtab_final.RDS" into seqTableToTax,seqTableToRename,seqtab_to_output
+        file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1270,7 +1223,7 @@ if (params.reference) {
                 publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
                 input:
-                file st from seqTableToTax
+                file st from seqtab_to_tax
                 file ref from refFile
                 file sp from speciesFile
 
@@ -1313,7 +1266,7 @@ if (params.reference) {
                 publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
                 input:
-                file st from seqTableToTax
+                file st from seqtab_to_tax
                 file ref from refFile
 
                 output:
@@ -1349,7 +1302,7 @@ if (params.reference) {
             publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
             input:
-            file st from seqTableToTax
+            file st from seqtab_to_tax
             file ref from refFile // this needs to be a database from the IDTAXA site
 
             output:
@@ -1430,7 +1383,7 @@ process output_asvs {
     tag { "output_asvs" }
 
     input:
-    file st from seqTableToRename
+    file st from seqtab_to_rename
     file rawst from rawSeqTableToRename
 
     output:
@@ -1610,6 +1563,8 @@ process output_unfiltered {
     output:
     file "*.rds"
     file "*.csv"
+    file "*.fasta"
+    file "ps.rds" into output_to_filter
 
     script:
     """
@@ -1625,6 +1580,7 @@ process output_unfiltered {
     rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
 
     tax <- readRDS("${tax}")
+    colnames(tax) <- stringr::str_to_lower(colnames(tax))
     seqs <- Biostrings::readDNAStringSet("${aln}")
     tree <- read.tree(file = "${tree}")
 
@@ -1659,10 +1615,138 @@ process output_unfiltered {
       spread(key="sample_id", value="totalRA") %>%
       write.csv(file = "gen_sum_unfiltered.csv")
 
+    #Output newick tree
+    write.tree(phy_tree(ps1), file="tree_filtered.nwk")
+
     #Output fasta of all ASV's
-    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "species")
+    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
     """
 }
+
+/*
+ *
+ * Step 13: Filter outputs
+ *
+ */ 
+ 
+// TODO: how to output pdf to  figs?
+process output_filtered {
+    tag { "output_filtered" }
+    publishDir "${params.outdir}/results/filtered", mode: "link", overwrite: true
+
+    input:
+    file ps from output_to_filter
+    
+    output:
+    file "*.rds"
+    file "*.csv"
+    file "*.pdf"
+    file "*.fasta"
+    file "*.nwk"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(phyloseq); packageVersion("phyloseq")
+    library(seqateurs); packageVersion("seqateurs")
+    library(tidyverse); packageVersion("tidyverse")
+    library(ape); packageVersion("ape")
+    library(vegan); packageVersion("vegan")
+    
+    # Taxonomic filters
+    ps0 <- readRDS("${ps}")
+    
+    # Phylum - Change all to lowercase at the taxtable step
+    if(nchar(as.character("${params.phylum}")) > 0){
+        ps0 <- phyloseq::subset_taxa(ps0, phylum %in% unlist(stringr::str_split(as.character("${params.phylum}"), ";",  n=Inf)))
+    }
+    # Order
+    if(nchar(as.character("${params.order}")) > 0){
+        ps0 <- phyloseq::subset_taxa(ps0, order %in% unlist(stringr::str_split(as.character("${params.order}"), ";",  n=Inf)))
+    }
+    # Family
+    if(nchar(as.character("${params.family}")) > 0){
+        ps0 <- phyloseq::subset_taxa(ps0, family %in% unlist(stringr::str_split(as.character("${params.family}"), ";",  n=Inf)))
+    }
+    # Family
+    if(nchar(as.character("${params.family}")) > 0){
+        ps0 <- phyloseq::subset_taxa(ps0, family %in% unlist(stringr::str_split(as.character("${params.family}"), ";",  n=Inf)))
+    }
+    # Genus
+    if(nchar(as.character("${params.genus}")) > 0){
+        ps0 <- phyloseq::subset_taxa(ps0, genus %in% unlist(stringr::str_split(as.character("${params.genus}"), ";",  n=Inf)))
+    }
+    # Species
+    if(nchar(as.character("${params.species}")) > 0){
+        ps0 <- phyloseq::subset_taxa(ps0, species %in% unlist(stringr::str_split(as.character("${params.species}"), ";",  n=Inf)))
+    }
+    
+    # Drop missing taxa
+    ps0 <- ps0 %>%
+      phyloseq::filter_taxa(function(x) mean(x) > 0, TRUE) %>%
+      phyloseq::prune_samples(sample_sums(.) >0, .) 
+
+    #Set a threshold for minimum reads per sample
+    threshold <- as.numeric("${params.min_sample_reads}")
+    
+    #Create rarefaction curve
+    rare <- phyloseq::otu_table(ps0) %>%
+      as("matrix") %>%
+      vegan::rarecurve(step=max(sample_sums(ps0))/100) %>%
+      purrr::map(function(x){
+        b <- as.data.frame(x)
+        b <- data.frame(OTU = b[,1], count = rownames(b))
+        b\$count <- as.numeric(gsub("N", "",  b\$count))
+        return(b)
+      }) %>%
+      purrr::set_names(sample_names(ps0)) %>%
+      dplyr::bind_rows(.id="sample_id")
+
+    # Write out rarefaction curve
+    pdf(file="rarefaction.pdf", width = 11, height = 8 , paper="a4r")
+    ggplot(data = rare)+
+      geom_line(aes(x = count, y = OTU, group=sample_id), alpha=0.5)+
+      geom_point(data = rare %>% 
+                   group_by(sample_id) %>% 
+                   top_n(1, count),
+                 aes(x = count, y = OTU, colour=(count > threshold))) +
+      geom_label(data = rare %>% 
+                   group_by(sample_id) %>% 
+                   top_n(1, count),
+                 aes(x = count, y = OTU,label=sample_id, colour=(count > threshold)),
+                 hjust=-0.05)+
+      scale_x_continuous(labels =  scales::scientific_format()) +
+      geom_vline(xintercept=threshold, linetype="dashed") +
+      labs(colour = "Sample kept?") +
+      xlab("Sequence reads") +
+      ylab("Observed ASV's")
+    try(dev.off(), silent=TRUE)
+
+    #Remove all samples under the minimum read threshold 
+    ps1 <- ps0 %>%
+      phyloseq::prune_samples(sample_sums(.)>=threshold, .) %>% 
+      phyloseq::filter_taxa(function(x) mean(x) > 0, TRUE) #Drop missing taxa from table
+
+    # Export summary of filtered results
+    seqateurs::summarise_taxa(ps1, "species", "sample_id") %>%
+      spread(key="sample_id", value="totalRA") %>%
+      write.csv(file = "spp_sum_filtered.csv")
+
+    seqateurs::summarise_taxa(ps1, "genus", "sample_id") %>%
+      spread(key="sample_id", value="totalRA") %>%
+      write.csv(file = "gen_sum_filtered.csv")
+
+    #Output fasta of all ASV's
+    seqateurs::ps_to_fasta(ps1, "asvs_filtered.fasta", seqnames="Species")
+
+    #Output newick tree
+    write.tree(phy_tree(ps1), file="tree_filtered.nwk")
+
+    # output filtered phyloseq object
+    saveRDS(ps1, "ps_filtered.rds") 
+    """
+}
+
 
 /*
  *
@@ -1671,59 +1755,60 @@ process output_unfiltered {
  */
 
 // TODO: add the results of the seqtable tracking
-//process ReadTracking {
-//    tag { "ReadTracking" }
-//    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
-//
-//    input:
-//    file trimmedTable from trimmedReadTracking
-//    file mergers from mergerTracking
-//    file dadaFs from dadaForReadTracking
-//    file dadaRs from dadaRevReadTracking
-//
-//    output:
-//    file "all.readtracking.txt"
-//
-//    script:
-//    """
-//    #!/usr/bin/env Rscript
-//    library(dada2); packageVersion("dada2")
-//    library(dplyr); packageVersion("dplyr")
-//
-//    getN <- function(x) sum(getUniques(x))
-//
-//    # the gsub here might be a bit brittle...
-//    dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
-//    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
-//    colnames(dadaFs) <- c("denoisedF")
-//    dadaFs\$SampleID <- rownames(dadaFs)
-//
-//    dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
-//    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
-//    colnames(dadaRs) <- c("denoisedR")
-//    dadaRs\$SampleID <- rownames(dadaRs)
-//
-//    all.mergers <- readRDS("${mergers}")
-//    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
-//    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
-//    colnames(mergers) <- c("merged")
-//    mergers\$SampleID <- rownames(mergers)
-//
-//    seqtab.nochim <- as.data.frame(rowSums(readRDS("${sTable}")))
-//    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
-//    colnames(seqtab.nochim) <- c("seqtab.nochim")
-//    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
-//
-//    trimmed <- read.csv("${trimmedTable}")
-//
-//    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
-//    # dropped data in later steps gets converted to NA on the join
-//    # these are effectively 0
-//    track[is.na(track)] <- 0
-//    
-//    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
-//    """
-//}
+process ReadTracking {
+    tag { "ReadTracking" }
+    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
+
+    input:
+    file trimmed from trimmed_read_tracking
+    file mergers from merged_read_tracking
+    file dadaFs from dada_for_read_tracking
+    file dadaRs from dada_rev_read_tracking
+    file st from seqtab_read_tracking
+
+    output:
+    file "all.readtracking.txt"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(dada2); packageVersion("dada2")
+    library(dplyr); packageVersion("dplyr")
+
+    getN <- function(x) sum(getUniques(x))
+
+    # the gsub here might be a bit brittle...
+    dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
+    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
+    colnames(dadaFs) <- c("denoisedF")
+    dadaFs\$SampleID <- rownames(dadaFs)
+
+    dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
+    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
+    colnames(dadaRs) <- c("denoisedR")
+    dadaRs\$SampleID <- rownames(dadaRs)
+
+    all.mergers <- readRDS("${mergers}")
+    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
+    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
+    colnames(mergers) <- c("merged")
+    mergers\$SampleID <- rownames(mergers)
+
+    seqtab.nochim <- as.data.frame(rowSums(readRDS("${st}")))
+    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
+    colnames(seqtab.nochim) <- c("seqtab.nochim")
+    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
+
+    trimmed <- read.csv("${trimmed}")
+
+    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
+    # dropped data in later steps gets converted to NA on the join
+    # these are effectively 0
+    track[is.na(track)] <- 0
+    
+    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
+    """
+}
 
 
 /*

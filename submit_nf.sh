@@ -44,7 +44,7 @@ nextflow pull alexpiper/piperline
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
 --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
 --reference 'idtaxa_bftrimmed.rds' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
--profile basc --subsample true -resume
+-profile basc --subsample 10000 -resume
 
 # Test with lenthvar false
 
