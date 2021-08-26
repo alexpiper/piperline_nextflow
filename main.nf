@@ -81,6 +81,10 @@ def helpMessage() {
       --order                       semicolon delimited string indicating the orders to retain
       --family                      semicolon delimited string indicating the families to retain
       --genus                       semicolon delimited string indicating the genera to retain
+      
+    Outputs
+      --check_ala                   Whether to check taxon detections against the Atlas of Living Australia.
+      --check_afd                   Whether to check taxon detections against the Australian Faunal Directory.
 
     Other arguments (optional):
       --dadaOpt.XXX                 Set as e.g. --dadaOpt.HOMOPOLYMER_GAP_PENALTY=-1 Global defaults for the dada function, see ?setDadaOpt in R for available options and their defaults
@@ -1360,7 +1364,9 @@ if (params.reference) {
             saveRDS(boots, "bootstrap_final.RDS")
             """
         }
-
+    //} else if (params.taxassignment == 'idtaxa-blast') {
+    //   
+    //}
     } else if (params.taxassignment) {
         exit 1, "Unknown taxonomic assignment method set: ${params.taxassignment}"
     } else {
@@ -1542,6 +1548,69 @@ if (params.runTree && params.lengthvar == false) {
     rooted_to_output = false
 }
 
+
+/*
+ *
+ * Step 12: Track reads
+ *
+ */
+
+// TODO: add the results of the seqtable tracking
+process ReadTracking {
+    tag { "ReadTracking" }
+    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
+
+    input:
+    file trimmed from trimmed_read_tracking
+    file mergers from merged_read_tracking
+    file dadaFs from dada_for_read_tracking
+    file dadaRs from dada_rev_read_tracking
+    file st from seqtab_read_tracking
+
+    output:
+    file "all.readtracking.txt"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(dada2); packageVersion("dada2")
+    library(dplyr); packageVersion("dplyr")
+
+    getN <- function(x) sum(getUniques(x))
+
+    # the gsub here might be a bit brittle...
+    dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
+    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
+    colnames(dadaFs) <- c("denoisedF")
+    dadaFs\$SampleID <- rownames(dadaFs)
+
+    dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
+    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
+    colnames(dadaRs) <- c("denoisedR")
+    dadaRs\$SampleID <- rownames(dadaRs)
+
+    all.mergers <- readRDS("${mergers}")
+    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
+    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
+    colnames(mergers) <- c("merged")
+    mergers\$SampleID <- rownames(mergers)
+
+    seqtab.nochim <- as.data.frame(rowSums(readRDS("${st}")))
+    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
+    colnames(seqtab.nochim) <- c("seqtab.nochim")
+    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
+
+    trimmed <- read.csv("${trimmed}")
+
+    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
+    # dropped data in later steps gets converted to NA on the join
+    # these are effectively 0
+    track[is.na(track)] <- 0
+    
+    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
+    """
+}
+
 /*
  *
  * Step 12: Generate outputs
@@ -1638,7 +1707,7 @@ process output_filtered {
     file ps from output_to_filter
     
     output:
-    file "*.rds"
+    file "*ps1.rds" into tax_check_ala,tax_check_afd
     file "*.csv"
     file "rarefaction.pdf"
     file "*.fasta"
@@ -1747,70 +1816,106 @@ process output_filtered {
     """
 }
 
-
 /*
  *
- * Step 12: Track reads
+ * Step 14: Taxon checks
  *
- */
+ */ 
+ 
+if (params.check_ala) {
+    process check_ala {
+        tag { "check_ala" }
+        publishDir "${params.outdir}/results/filtered", mode: "copy", overwrite: true
 
-// TODO: add the results of the seqtable tracking
-process ReadTracking {
-    tag { "ReadTracking" }
-    publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
+        input:
+        file ps from tax_check_ala
 
-    input:
-    file trimmed from trimmed_read_tracking
-    file mergers from merged_read_tracking
-    file dadaFs from dada_for_read_tracking
-    file dadaRs from dada_rev_read_tracking
-    file st from seqtab_read_tracking
+        output:
+        file "*.csv"
 
-    output:
-    file "all.readtracking.txt"
+        script:
+        """
+        #!/usr/bin/env Rscript
+        library(galah); packageVersion("galah")
+        library(tidyverse); packageVersion("tidyverse")
+        
+        ps1 <- readRDS("${ps}")    
+        
+        # Check presence on ALA
+        # First we need to set some data quality filters for ALA
+        # To view available filters, run: find_field_values("basis_of_record")
+        ala_quality_filter <- galah::select_filters(
+              basisOfRecord = c("PreservedSpecimen", "LivingSpecimen",
+                              "MaterialSample", "NomenclaturalChecklist"),
+              profile = "ALA")
 
-    script:
-    """
-    #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(dplyr); packageVersion("dplyr")
+        ala_check <- ps1 %>%
+          speedyseq::psmelt() %>%
+          dplyr::group_by(family, genus, species) %>%
+          dplyr::summarise(metabarcoding_reads = sum(Abundance)) %>%
+          dplyr::filter(!str_detect(species, "__")) %>%
+          dplyr::mutate(species = species %>% str_replace_all("_", " ")) %>%
+          dplyr::mutate(
+            species_present = purrr::map(species, function(x){
+            # first check name
+            query <- select_taxa(x) %>% 
+              as_tibble()%>%
+              dplyr::filter(across(any_of("match_type"), ~!.x == "higherMatch"))
+            # Then get occurance counts
+            if(!is.null(query$scientific_name)){
+              ala_occur <- ala_counts(taxa=query, filters=ala_quality_filter)
+              return(data.frame(species_present = ifelse(ala_occur > 0, TRUE, FALSE), ALA_counts = ala_occur))
+            } else {
+              return(data.frame(species_present = FALSE, ALA_counts = 0))
+            }
+            })) %>%
+          unnest(species_present) %>%
+          dplyr::select(family, genus, species, species_present, ALA_counts, metabarcoding_reads)
 
-    getN <- function(x) sum(getUniques(x))
-
-    # the gsub here might be a bit brittle...
-    dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
-    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
-    colnames(dadaFs) <- c("denoisedF")
-    dadaFs\$SampleID <- rownames(dadaFs)
-
-    dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
-    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
-    colnames(dadaRs) <- c("denoisedR")
-    dadaRs\$SampleID <- rownames(dadaRs)
-
-    all.mergers <- readRDS("${mergers}")
-    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
-    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
-    colnames(mergers) <- c("merged")
-    mergers\$SampleID <- rownames(mergers)
-
-    seqtab.nochim <- as.data.frame(rowSums(readRDS("${st}")))
-    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
-    colnames(seqtab.nochim) <- c("seqtab.nochim")
-    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
-
-    trimmed <- read.csv("${trimmed}")
-
-    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
-    # dropped data in later steps gets converted to NA on the join
-    # these are effectively 0
-    track[is.na(track)] <- 0
-    
-    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
-    """
+        write_csv(ala_check, "ala_check.csv")    
+        """
+    }
 }
 
+if (params.check_afd) {
+    process check_afd {
+        tag { "check_afd" }
+        publishDir "${params.outdir}/results/filtered", mode: "copy", overwrite: true
 
+        input:
+        file ps from tax_check_afd
+
+        output:
+        file "*.csv"
+
+        script:
+        """
+        #!/usr/bin/env Rscript
+        library(afdscraper); packageVersion("afdscraper")
+        library(tidyverse); packageVersion("tidyverse")
+        library(speedyseq); packageVersion("speedyseq")
+        
+        ps1 <- readRDS("${ps}")    
+        
+        # Check presence on AFD
+        afd_check <- ps1 %>%
+          speedyseq::psmelt() %>%
+          dplyr::group_by(family, genus, species) %>%
+          dplyr::summarise(metabarcoding_reads = sum(Abundance)) %>%
+          dplyr::filter(!str_detect(species, "__")) %>%
+          dplyr::mutate(species = species %>% str_replace_all("_", " ")) %>%
+          dplyr::mutate(
+            family_present = afdscraper::check_afd_presence(family),
+            genus_present = afdscraper::check_afd_presence(genus),
+            species_present = afdscraper::check_afd_presence(species)
+          ) %>%
+          dplyr::select(family, family_present, genus, genus_present, 
+                        species, species_present, metabarcoding_reads)
+            
+        write_csv(afd_check, "afd_check.csv")    
+        """
+    }
+}
 /*
  * Completion e-mail notification
  */
