@@ -346,9 +346,9 @@ process create_samdf {
       ),
       for_primer_seq = "${params.fwdprimer}",
       rev_primer_seq = "${params.revprimer}",
-      pcr_primers = paste0("${params.fwdprimer_name}", "-", "${params.revprimer_name}")
+      pcr_primers = paste0("${params.fwdprimer_name}", "-", "${params.revprimer_name}"),
+      sample_name = NA_character_
       ) %>%
-      dplyr::select(-sample_name) %>%
       seqateurs::coalesce_join(fastqFs, by="sample_id")
 
     #Write out updated sample CSV for use
@@ -1616,7 +1616,7 @@ process output_unfiltered {
       write.csv(file = "gen_sum_unfiltered.csv")
 
     #Output newick tree
-    write.tree(phy_tree(ps1), file="tree_filtered.nwk")
+    write.tree(phy_tree(ps), file="tree_filtered.nwk")
 
     #Output fasta of all ASV's
     seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
@@ -1640,7 +1640,7 @@ process output_filtered {
     output:
     file "*.rds"
     file "*.csv"
-    file "*.pdf"
+    file "rarefaction.pdf"
     file "*.fasta"
     file "*.nwk"
 
