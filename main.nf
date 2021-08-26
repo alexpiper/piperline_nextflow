@@ -1707,7 +1707,7 @@ process output_filtered {
     file ps from output_to_filter
     
     output:
-    file "*ps1.rds" into tax_check_ala,tax_check_afd
+    file "ps1.rds" into tax_check_ala,tax_check_afd
     file "*.csv"
     file "rarefaction.pdf"
     file "*.fasta"
