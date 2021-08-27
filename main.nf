@@ -1849,30 +1849,37 @@ if (params.check_ala) {
                               "MaterialSample", "NomenclaturalChecklist"),
               profile = "ALA")
 
-        ala_check <- ps1 %>%
+        spp_to_check <- ps1 %>%
           speedyseq::psmelt() %>%
           dplyr::group_by(family, genus, species) %>%
           dplyr::summarise(metabarcoding_reads = sum(Abundance)) %>%
           dplyr::filter(!str_detect(species, "__")) %>%
-          dplyr::mutate(species = species %>% str_replace_all("_", " ")) %>%
-          dplyr::mutate(
-            species_present = purrr::map(species, function(x){
-            # first check name
-            query <- select_taxa(x) %>% 
-              as_tibble()%>%
-              dplyr::filter(across(any_of("match_type"), ~!.x == "higherMatch"))
-            # Then get occurance counts
-            if(!is.null(query$scientific_name)){
-              ala_occur <- galah::ala_counts(taxa=query, filters=ala_quality_filter)
-              return(data.frame(species_present = ifelse(ala_occur > 0, TRUE, FALSE), ALA_counts = ala_occur))
-            } else {
-              return(data.frame(species_present = FALSE, ALA_counts = 0))
-            }
-            })) %>%
-          unnest(species_present) %>%
-          dplyr::select(family, genus, species, species_present, ALA_counts, metabarcoding_reads)
-
-        write_csv(ala_check, "ala_check.csv")    
+          dplyr::mutate(species = species %>% str_replace_all("_", " ")) 
+          
+        if(nrow(spp_to_check) > 0 ){
+            ala_check <- spp_to_check %>%
+              dplyr::mutate(
+                species_present = purrr::map(species, function(x){
+                # first check name
+                query <- galah::select_taxa(x) %>% 
+                  tibble::as_tibble()%>%
+                  dplyr::filter(across(any_of("match_type"), ~!.x == "higherMatch"))
+                # Then get occurance counts
+                if(!is.null(query\$scientific_name)){
+                  ala_occur <- galah::ala_counts(taxa=query, filters=ala_quality_filter)
+                  return(data.frame(species_present = ifelse(ala_occur > 0, TRUE, FALSE), ALA_counts = ala_occur))
+                } else {
+                  return(data.frame(species_present = FALSE, ALA_counts = 0))
+                }
+                })) %>%
+              tidyr::unnest(species_present) %>%
+              dplyr::select(family, genus, species, species_present, ALA_counts, metabarcoding_reads)
+            
+            write_csv(ala_check, "ala_check.csv")    
+        } else {
+            # Write out empty csv so nextflow doesnt fail
+            write_csv(as.data.frame(""), "ala_check.csv")
+        }
         """
     }
 }
@@ -1898,21 +1905,28 @@ if (params.check_afd) {
         ps1 <- readRDS("${ps}")    
         
         # Check presence on AFD
-        afd_check <- ps1 %>%
+        spp_to_check <- ps1 %>%
           speedyseq::psmelt() %>%
           dplyr::group_by(family, genus, species) %>%
           dplyr::summarise(metabarcoding_reads = sum(Abundance)) %>%
           dplyr::filter(!str_detect(species, "__")) %>%
-          dplyr::mutate(species = species %>% str_replace_all("_", " ")) %>%
-          dplyr::mutate(
-            family_present = afdscraper::check_afd_presence(family),
-            genus_present = afdscraper::check_afd_presence(genus),
-            species_present = afdscraper::check_afd_presence(species)
-          ) %>%
-          dplyr::select(family, family_present, genus, genus_present, 
-                        species, species_present, metabarcoding_reads)
-            
-        write_csv(afd_check, "afd_check.csv")    
+          dplyr::mutate(species = species %>% str_replace_all("_", " ")) 
+          
+        if(nrow(spp_to_check) > 0 ){
+              afd_check <- spp_to_check %>%
+              dplyr::mutate(
+                family_present = afdscraper::check_afd_presence(family),
+                genus_present = afdscraper::check_afd_presence(genus),
+                species_present = afdscraper::check_afd_presence(species)
+              ) %>%
+              dplyr::select(family, family_present, genus, genus_present, 
+                            species, species_present, metabarcoding_reads)
+                
+            write_csv(afd_check, "afd_check.csv")    
+        } else {
+            # Write out empty csv so nextflow doesnt fail
+            write_csv(as.data.frame(""), "afd_check.csv")
+        }
         """
     }
 }
