@@ -315,8 +315,8 @@ process create_samdf {
     script:
     """
     #!/usr/bin/env Rscript
-    library(seqateurs)
-    library(tidyverse)
+    require(seqateurs)
+    require(tidyverse)
     SampleSheet <- normalizePath( "${samplesheet}")
     runParameters <- normalizePath( "${runparams}")
     
@@ -518,10 +518,10 @@ process Nfilter {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-    library(Biostrings); packageVersion("Biostrings")
-    library(stringr); packageVersion("stringr")
+    require(dada2); packageVersion("dada2")
+    require(ShortRead); packageVersion("ShortRead")
+    require(Biostrings); packageVersion("Biostrings")
+    require(stringr); packageVersion("stringr")
     
     #Filter out reads with N's
     out1 <- filterAndTrim(fwd = "${reads[0]}",
@@ -694,10 +694,10 @@ process FilterAndTrim {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(ShortRead); packageVersion("ShortRead")
-    library(Biostrings); packageVersion("Biostrings")
-    library(stringr); packageVersion("stringr")
+    require(dada2); packageVersion("dada2")
+    require(ShortRead); packageVersion("ShortRead")
+    require(Biostrings); packageVersion("Biostrings")
+    require(stringr); packageVersion("stringr")
     
     fastqFs <- sort(list.files(pattern="*.R1.cutadapt.fastq.gz"))
     fastqFs <- fastqFs[!stringr::str_detect(fastqFs, "unknown")]
@@ -816,7 +816,7 @@ process LearnErrors {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")    
+    require(dada2); packageVersion("dada2")    
     setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
 
     # File parsing
@@ -891,8 +891,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         """
         #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")
-        library(tidyverse); packageVersion("tidyverse")
+        require(dada2); packageVersion("dada2")
+        require(tidyverse); packageVersion("tidyverse")
         setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
         filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
         filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
@@ -959,7 +959,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         """
         #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")        
+        require(dada2); packageVersion("dada2")        
         setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
 
         errF <- readRDS("${errFor}")
@@ -1002,7 +1002,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         '''
         #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")
+        require(dada2); packageVersion("dada2")
 
         dadaFs <- lapply(list.files(path = '.', pattern = '.dadaFs.RDS$'), function (x) readRDS(x))
         names(dadaFs) <- sub('.dadaFs.RDS', '', list.files('.', pattern = '.dadaFs.RDS'))
@@ -1027,7 +1027,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         script:
         '''
         #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")        
+        require(dada2); packageVersion("dada2")        
         
         mergerFiles <- list.files(path = '.', pattern = '.*.RDS$')
         pairIds <- sub('.merged.RDS', '', mergerFiles)
@@ -1066,11 +1066,11 @@ if (params.coding) {
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
         """
         #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")        
-        library(tidyverse); packageVersion("tidyverse")
-        library(Biostrings); packageVersion("Biostrings")
-        library(taxreturn); packageVersion("taxreturn")
-        library(patchwork); packageVersion("patchwork")
+        require(dada2); packageVersion("dada2")        
+        require(tidyverse); packageVersion("tidyverse")
+        require(Biostrings); packageVersion("Biostrings")
+        require(taxreturn); packageVersion("taxreturn")
+        require(patchwork); packageVersion("patchwork")
         st.all <- readRDS("${st}")
 
         # Remove chimeras
@@ -1146,10 +1146,10 @@ if (params.coding) {
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
         """
         #!/usr/bin/env Rscript
-        library(dada2); packageVersion("dada2")        
-        library(tidyverse); packageVersion("tidyverse")
-        library(Biostrings); packageVersion("Biostrings")
-        library(patchwork); packageVersion("patchwork")
+        require(dada2); packageVersion("dada2")        
+        require(tidyverse); packageVersion("tidyverse")
+        require(Biostrings); packageVersion("Biostrings")
+        require(patchwork); packageVersion("patchwork")
         
         st.all <- readRDS("${st}")
 
@@ -1238,7 +1238,7 @@ if (params.reference) {
                 script:
                 """
                 #!/usr/bin/env Rscript
-                library(dada2); packageVersion("dada2")                
+                require(dada2); packageVersion("dada2")                
 
                 seqtab <- readRDS("${st}")
 
@@ -1281,7 +1281,7 @@ if (params.reference) {
                 taxLevels = params.taxLevels ? "c( ${params.taxLevels} )," : ''
                 """
                 #!/usr/bin/env Rscript
-                library(dada2); packageVersion("dada2")
+                require(dada2); packageVersion("dada2")
                 
                 seqtab <- readRDS("${st}")
 
@@ -1317,9 +1317,9 @@ if (params.reference) {
             script:
             """
             #!/usr/bin/env Rscript
-            library(dada2); packageVersion("dada2")
-            library(DECIPHER); packageVersion("DECIPHER")
-            library(stringr); packageVersion("stringr")
+            require(dada2); packageVersion("dada2")
+            require(DECIPHER); packageVersion("DECIPHER")
+            require(stringr); packageVersion("stringr")
 
             seqtab <- readRDS("${st}")
 
@@ -1398,9 +1398,9 @@ process output_asvs {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2)
-    library(Biostrings)    
-    library(digest)
+    require(dada2)
+    require(Biostrings)    
+    require(digest)
     
     # read RDS w/ data
     st <- readRDS("${st}")
@@ -1435,8 +1435,8 @@ if (params.runTree && params.lengthvar == false) {
             script:
             """
             #!/usr/bin/env Rscript
-            library(dada2); packageVersion("dada2")
-            library(DECIPHER); packageVersion("DECIPHER")
+            require(dada2); packageVersion("dada2")
+            require(DECIPHER); packageVersion("DECIPHER")
 
             seqs <- readDNAStringSet("${seqs}")
             alignment <- AlignSeqs(seqs,
@@ -1472,7 +1472,7 @@ if (params.runTree && params.lengthvar == false) {
             script:
             """
             #!/usr/bin/env Rscript
-            library(phangorn); packageVersion("phangorn")
+            require(phangorn); packageVersion("phangorn")
 
             phang.align <- read.phyDat("aligned_seqs.fasta",
                                         format = "fasta",
@@ -1531,8 +1531,8 @@ if (params.runTree && params.lengthvar == false) {
         script:
         """
         #!/usr/bin/env Rscript
-        library(phangorn); packageVersion("phangorn")
-        library(ape); packageVersion("ape")
+        require(phangorn); packageVersion("phangorn")
+        require(ape); packageVersion("ape")
 
         tree <- read.tree(file = "${tree}")
 
@@ -1573,8 +1573,8 @@ process ReadTracking {
     script:
     """
     #!/usr/bin/env Rscript
-    library(dada2); packageVersion("dada2")
-    library(dplyr); packageVersion("dplyr")
+    require(dada2); packageVersion("dada2")
+    require(dplyr); packageVersion("dplyr")
 
     getN <- function(x) sum(getUniques(x))
 
@@ -1638,10 +1638,10 @@ process output_unfiltered {
     script:
     """
     #!/usr/bin/env Rscript
-    library(phyloseq); packageVersion("phyloseq")
-    library(seqateurs); packageVersion("seqateurs")
-    library(tidyverse); packageVersion("tidyverse")
-    library(ape); packageVersion("ape")
+    require(phyloseq); packageVersion("phyloseq")
+    require(seqateurs); packageVersion("seqateurs")
+    require(tidyverse); packageVersion("tidyverse")
+    require(ape); packageVersion("ape")
     
     # Read in files
     seqtab <- readRDS("${st}")
@@ -1707,7 +1707,7 @@ process output_filtered {
     file ps from output_to_filter
     
     output:
-    file "ps1.rds" into tax_check_ala,tax_check_afd
+    file "ps_filtered.rds" into tax_check_ala,tax_check_afd
     file "*.csv"
     file "rarefaction.pdf"
     file "*.fasta"
@@ -1716,11 +1716,11 @@ process output_filtered {
     script:
     """
     #!/usr/bin/env Rscript
-    library(phyloseq); packageVersion("phyloseq")
-    library(seqateurs); packageVersion("seqateurs")
-    library(tidyverse); packageVersion("tidyverse")
-    library(ape); packageVersion("ape")
-    library(vegan); packageVersion("vegan")
+    require(phyloseq); packageVersion("phyloseq")
+    require(seqateurs); packageVersion("seqateurs")
+    require(tidyverse); packageVersion("tidyverse")
+    require(ape); packageVersion("ape")
+    require(vegan); packageVersion("vegan")
     
     # Taxonomic filters
     ps0 <- readRDS("${ps}")
@@ -1836,8 +1836,8 @@ if (params.check_ala) {
         script:
         """
         #!/usr/bin/env Rscript
-        library(galah); packageVersion("galah")
-        library(tidyverse); packageVersion("tidyverse")
+        require(galah); packageVersion("galah")
+        require(tidyverse); packageVersion("tidyverse")
         
         ps1 <- readRDS("${ps}")    
         
@@ -1863,7 +1863,7 @@ if (params.check_ala) {
               dplyr::filter(across(any_of("match_type"), ~!.x == "higherMatch"))
             # Then get occurance counts
             if(!is.null(query$scientific_name)){
-              ala_occur <- ala_counts(taxa=query, filters=ala_quality_filter)
+              ala_occur <- galah::ala_counts(taxa=query, filters=ala_quality_filter)
               return(data.frame(species_present = ifelse(ala_occur > 0, TRUE, FALSE), ALA_counts = ala_occur))
             } else {
               return(data.frame(species_present = FALSE, ALA_counts = 0))
@@ -1891,9 +1891,9 @@ if (params.check_afd) {
         script:
         """
         #!/usr/bin/env Rscript
-        library(afdscraper); packageVersion("afdscraper")
-        library(tidyverse); packageVersion("tidyverse")
-        library(speedyseq); packageVersion("speedyseq")
+        require(afdscraper); packageVersion("afdscraper")
+        require(tidyverse); packageVersion("tidyverse")
+        require(speedyseq); packageVersion("speedyseq")
         
         ps1 <- readRDS("${ps}")    
         
