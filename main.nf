@@ -74,6 +74,7 @@ def helpMessage() {
 
     Taxonomic arguments (optional):
       --species                     Specify path to fasta file. See dada2 addSpecies() for more detail.  
+      --blastdb                     Specify path to fasta file.
       
     Sample and taxon filtering parameters (optional):
       --min_sample_reads            integer. The minimum number of reads a sample must have to be retained
@@ -566,7 +567,6 @@ process Nfilter {
  */
  
 // TODO: Add file renaming to append the primer to both if not present
-// TODO: Swap the demux param for detection of multiple primers in string
 //TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
 if (params.lengthvar == false) {
     process cutadapt {
@@ -585,8 +585,9 @@ if (params.lengthvar == false) {
         script:
         """
         #!/bin/bash
-        
-        if [ ! -z "${params.demux}" ];
+        nprimer="\$(wc -l forwardP.fa)"
+
+        if [ "\${nprimer}" \\> 3 ];
         then
         echo "More than one primer detected, demultiplexing (single core)";
         cutadapt \\
@@ -633,8 +634,9 @@ else if (params.lengthvar == true) {
         script:
         """
         #!/bin/bash
-        
-        if [ ! -z "${params.demux}" ];
+        nprimer="\$(wc -l forwardP.fa)"
+
+        if [ "\${nprimer}" \\> 3 ];
         then
         echo "More than one primer detected, demultiplexing (single-core)";
         cutadapt \\
@@ -1213,93 +1215,53 @@ if (params.coding) {
 
 // TODO: Add IDTAXA + Blast
 if (params.reference) {
-    refFile = file(params.reference)
+    ref_db = file(params.reference)
     if (params.taxassignment == 'rdp') {
         // TODO: we could combine these into the same script
         
+        process AssignTaxSpeciesRDP {
+            tag { "AssignTaxSpeciesRDP" }
+            publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
-        if (params.species) {
+            input:
+            file st from seqtab_to_tax
+            file ref from ref_db
 
-            speciesFile = file(params.species)
+            output:
+            file "tax_final.RDS" into taxFinal,taxtab_to_output
+            file "bootstrap_final.RDS" into bootstrapFinal
 
-            process AssignTaxSpeciesRDP {
-                tag { "AssignTaxSpeciesRDP" }
-                publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+            script:
+            """
+            #!/usr/bin/env Rscript
+            require(dada2); packageVersion("dada2")                
 
-                input:
-                file st from seqtab_to_tax
-                file ref from refFile
-                file sp from speciesFile
+            seqtab <- readRDS("${st}")
 
-                output:
-                file "tax_final.RDS" into taxFinal,taxtab_to_output
-                file "bootstrap_final.RDS" into bootstrapFinal
-
-                script:
-                """
-                #!/usr/bin/env Rscript
-                require(dada2); packageVersion("dada2")                
-
-                seqtab <- readRDS("${st}")
-
-                # Assign taxonomy
-                tax <- assignTaxonomy(seqtab, "${ref}",
-                                        multithread=${task.cpus},
-                                        tryRC = TRUE,
-                                        outputBootstraps = TRUE,
-                                        minBoot = ${params.minBoot},
-                                        verbose = TRUE)
-                boots <- tax\$boot
-
+            # Assign taxonomy
+            tax <- assignTaxonomy(seqtab, "${ref}",
+                                    multithread=${task.cpus},
+                                    tryRC = TRUE,
+                                    outputBootstraps = TRUE,
+                                    minBoot = ${params.minBoot},
+                                    verbose = TRUE)
+            boots <- tax\$boot
+               
+            if(as.logical("${params.species}")){
+                # Add species using exact matching
                 tax <- addSpecies(tax\$tax, "${sp}",
                                  tryRC = TRUE,
                                  verbose = TRUE)
 
                 rownames(tax) <- colnames(seqtab)
-
-                # Write original data
-                saveRDS(tax, "tax_final.RDS")
-                saveRDS(boots, "bootstrap_final.RDS")
-                """
             }
-
-        } else {
-
-            process AssignTaxonomyRDP {
-                tag { "TaxonomyRDP" }
-                publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
-
-                input:
-                file st from seqtab_to_tax
-                file ref from refFile
-
-                output:
-                file "tax_final.RDS" into taxFinal,taxtab_to_output
-                file "bootstrap_final.RDS" into bootstrapFinal
-
-                script:
-                taxLevels = params.taxLevels ? "c( ${params.taxLevels} )," : ''
-                """
-                #!/usr/bin/env Rscript
-                require(dada2); packageVersion("dada2")
-                
-                seqtab <- readRDS("${st}")
-
-                # Assign taxonomy
-                tax <- assignTaxonomy(seqtab, "${ref}",
-                                      multithread=${task.cpus},
-                                      minBoot = ${params.minBoot},
-                                      tryRC = TRUE,
-                                      outputBootstraps = TRUE, ${taxLevels}
-                                      verbose = TRUE 
-                                      )
-
-                # Write to disk
-                saveRDS(tax\$tax, "tax_final.RDS")
-                saveRDS(tax\$boot, "bootstrap_final.RDS")
-                """
-            }
+            
+            # Write original data
+            saveRDS(tax, "tax_final.RDS")
+            saveRDS(boots, "bootstrap_final.RDS")
+            """
         }
+
     } else if (params.taxassignment == 'idtaxa') {
         process TaxonomyIDTAXA {
             tag { "TaxonomyIDTAXA" }
@@ -1307,7 +1269,7 @@ if (params.reference) {
 
             input:
             file st from seqtab_to_tax
-            file ref from refFile // this needs to be a database from the IDTAXA site
+            file ref from ref_db // this needs to be a database from the IDTAXA site
 
             output:
             file "tax_final.RDS" into taxFinal,taxtab_to_output
@@ -1319,18 +1281,19 @@ if (params.reference) {
             #!/usr/bin/env Rscript
             require(dada2); packageVersion("dada2")
             require(DECIPHER); packageVersion("DECIPHER")
-            require(stringr); packageVersion("stringr")
-
+            require(tidyverse); packageVersion("tidyverse")
+            require(seqateurs); packageVersion("seqateurs")
+            
             seqtab <- readRDS("${st}")
 
             # Create a DNAStringSet from the ASVs
             dna <- DNAStringSet(getSequences(seqtab))
 
             # load database; this should be a RData file
-            if (stringr::str_detect("${refFile}", ".RData")){
-                load("${refFile}")
-            } else if(stringr::str_detect("${refFile}", ".rds")){
-                trainingSet <- readRDS("${refFile}")
+            if (stringr::str_detect("${ref_db}", ".RData")){
+                load("${ref_db}")
+            } else if(stringr::str_detect("${ref_db}", ".rds")){
+                trainingSet <- readRDS("${ref_db}")
             }
 
             ids <- IdTaxa(dna, trainingSet,
@@ -1338,18 +1301,23 @@ if (params.reference) {
                 processors=${task.cpus},
                 verbose=TRUE)
             # ranks of interest
-            ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species")
+            ranks <-  c("root", "kingdom", "phylum","class", "order", "family", "genus","species") 
             saveRDS(ids, 'raw_idtaxa.RDS')
 
-            # Convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
-            taxid <- t(sapply(ids, function(x) {
-                    m <- match(ranks, x\$rank)
-                    taxa <- x\$taxon[m]
-                    taxa[startsWith(taxa, "unclassified_")] <- NA
-                    taxa
-            }))
-            colnames(taxid) <- ranks
-            rownames(taxid) <- getSequences(seqtab)
+            #Convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
+            tax <- t(sapply(ids, function(x) {
+              taxa <- paste0(x\$taxon,"_", x\$confidence)
+              taxa[startsWith(taxa, "unclassified_")] <- NA
+              taxa
+            })) %>%
+              purrr::map(unlist) %>%
+              stri_list2matrix(byrow=TRUE, fill=NA) %>%
+              magrittr::set_colnames(ranks) %>%
+              as.data.frame() %>%
+              magrittr::set_rownames(getSequences(seqtab_final)) %T>%
+              write.csv("output/logs/idtaxa_results.csv") %>%  #Write out logfile with confidence levels
+              mutate_all(str_replace,pattern="(?:.(?!_))+\$", replacement="") %>%
+              magrittr::set_rownames(getSequences(seqtab_final)) 
 
             boots <- t(sapply(ids, function(x) {
                     m <- match(ranks, x\$rank)
@@ -1358,15 +1326,64 @@ if (params.reference) {
             }))
             colnames(boots) <- ranks
             rownames(boots) <- getSequences(seqtab)
+            
+            if(as.logical("${params.species}") & !as.logical("${params.blastdb}")){
+               #Further assign to species rank using exact matching
+                exact <- assignSpecies(seqtab_final, as.character("${params.species}"), allowMultiple = TRUE, tryRC = TRUE, verbose = FALSE) %>%
+                    as_tibble(rownames = "OTU") %>%
+                    filter(!is.na(Species)) %>%
+                    dplyr::mutate(binomial = paste0(Genus," ",Species)) %>%
+                     dplyr::rename(exact_genus = Genus, exact_species = Species)
+                
+                #Merge together
+                tax_final <- tax %>%
+                  as_tibble(rownames = "OTU") %>%
+                  left_join(exact, by="OTU") %>%
+                  dplyr::mutate(Species = case_when(
+                    is.na(Species) & Genus == exact_genus ~ binomial,
+                    !is.na(Species) ~ Species
+                  )) %>%
+                dplyr::select(OTU, ranks) %>%
+                  column_to_rownames("OTU") %>%
+                  seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
+                  as.matrix()
+                  
+            } else if(!as.logical("${params.species}") & as.logical("${params.blastdb}")){
+                # Add species using BLAST
+                seqs <- taxreturn::char2DNAbin(colnames(seqtab_final))
+                names(seqs) <- colnames(seqtab_final) 
+                
+                # TODO: allow editing of these BLAST parameters
+                blast_spp <- blast_assign_species(query=seqs, db=as.character("${params.blastdb}"), identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5, ranks=ranks, delim=";") %>%
+                  dplyr::rename(blast_genus = Genus, blast_spp = Species) %>%
+                  dplyr::filter(!is.na(blast_spp))
+                  
+                #Join together
+                tax_final <- tax %>%
+                  as_tibble(rownames = "OTU") %>%
+                  left_join(blast_spp , by="OTU") %>%
+                  dplyr::mutate(Species = case_when(
+                    is.na(Species) & Genus == blast_genus ~ blast_spp,
+                    !is.na(Species) ~ Species
+                  )) %>%
+                  dplyr::select(OTU, ranks) %>%
+                  column_to_rownames("OTU") %>%
+                  seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
+                  as.matrix()  
+                  
+            } else if (as.logical("${params.species}") & as.logical("${params.blastdb}")){
+              #TODO add both?
+              stop("Only one of param.species, or param.blastdb should be provided")
+            } else {
+              tax_final <- tax
+            }
 
             # Write to disk
-            saveRDS(taxid, "tax_final.RDS")
+            saveRDS(tax_final, "tax_final.RDS")
             saveRDS(boots, "bootstrap_final.RDS")
             """
         }
-    //} else if (params.taxassignment == 'idtaxa-blast') {
-    //   
-    //}
+
     } else if (params.taxassignment) {
         exit 1, "Unknown taxonomic assignment method set: ${params.taxassignment}"
     } else {
