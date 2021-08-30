@@ -90,6 +90,7 @@ def helpMessage() {
     Other arguments (optional):
       --dadaOpt.XXX                 Set as e.g. --dadaOpt.HOMOPOLYMER_GAP_PENALTY=-1 Global defaults for the dada function, see ?setDadaOpt in R for available options and their defaults
       --subsample                   subsample a random number of sequencing reads from each fastq.
+      --subsample_seed              Seed for random subsampling
       --pool                        Should sample pooling be used to aid identification of low-abundance ASVs? Options are
                                     pseudo pooling: "pseudo", true: "T", false: "F"
       --outdir                      The output directory where the results will be saved
@@ -252,8 +253,8 @@ process validate_reads {
         cp ${reads[0]} data/${fastq_id}_R1_001.fastq.gz
         cp ${reads[1]} data/${fastq_id}_R2_001.fastq.gz
     else
-        seqtk sample -s100 ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
-        seqtk sample -s100 ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
+        seqtk sample -s"${subsample_seed}" ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
+        seqtk sample -s"${subsample_seed}" ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
     fi  
     
     # Get expected positions of elements from read_format
@@ -1213,9 +1214,17 @@ if (params.coding) {
  *
  */
 
-// TODO: Add IDTAXA + Blast
 if (params.reference) {
-    ref_db = file(params.reference)
+    ref_file = file(params.reference)
+    
+    if (params.species_db ){
+      species_file = file(params.species_db)
+    }
+    
+    if (params.blast_db ){
+      blast_file = file(params.blast_db)
+    }
+    
     if (params.taxassignment == 'rdp') {
         // TODO: we could combine these into the same script
         
@@ -1225,7 +1234,8 @@ if (params.reference) {
 
             input:
             file st from seqtab_to_tax
-            file ref from ref_db
+            file ref from ref_file
+            file spp from species_file
 
             output:
             file "tax_final.RDS" into taxFinal,taxtab_to_output
@@ -1269,7 +1279,7 @@ if (params.reference) {
 
             input:
             file st from seqtab_to_tax
-            file ref from ref_db // this needs to be a database from the IDTAXA site
+            file ref from ref_file // this needs to be a database from the IDTAXA site
 
             output:
             file "tax_final.RDS" into taxFinal,taxtab_to_output
@@ -1290,10 +1300,10 @@ if (params.reference) {
             dna <- DNAStringSet(getSequences(seqtab))
 
             # load database; this should be a RData file
-            if (stringr::str_detect("${ref_db}", ".RData")){
-                load("${ref_db}")
-            } else if(stringr::str_detect("${ref_db}", ".rds")){
-                trainingSet <- readRDS("${ref_db}")
+            if (stringr::str_detect("${ref_file}", ".RData")){
+                load("${ref_file}")
+            } else if(stringr::str_detect("${ref_file}", ".rds")){
+                trainingSet <- readRDS("${ref_file}")
             }
 
             ids <- IdTaxa(dna, trainingSet,

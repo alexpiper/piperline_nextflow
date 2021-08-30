@@ -22,22 +22,15 @@
 
 module purge
 module load Nextflow/20.10.0
-module load charliecloud/0.23-GCCcore-9.3.0
-module load Java/12.0.1
-
-# Run a test set using the dada2 test samples
-# Get example samples
-#wget https://mothur.s3.us-east-2.amazonaws.com/wiki/miseqsopdata.zip -O miseqsopdata.zip 
-#unzip miseqsopdata.zip
-
-# Get reference sequences
-#wget https://zenodo.org/record/158955/files/gg_13_8_train_set_97.fa.gz?download=1 -O gg_13_8_train_set_97.fa.gz
-
 
 # Run COI data
 
 # Data from /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3
 cp /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3/* /group/pathogens/Alexp/Metabarcoding/test/COI
+
+for d in ./*/ ; do
+(cd "$d" && mv *.fastq.gz ../. );
+done
 
 cd /group/pathogens/Alexp/Metabarcoding/test/COI
 nextflow pull alexpiper/piperline
@@ -46,16 +39,13 @@ nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar fal
 --reference 'idtaxa_bftrimmed.rds' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
 -profile basc --subsample 10000 -resume
 
-# Test with lenthvar false
-
-for d in ./*/ ; do
-(cd "$d" && mv *.fastq.gz ../. );
-done
-
 # Run dev version
 
 cd /group/pathogens/Alexp/Metabarcoding/test/COI
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
 --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
---reference 'idtaxa_bftrimmed.rds' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
+--reference 'idtaxa_bftrimmed.rds' --blastdb 'insecta_hierarchial_bftrimmed.fa.gz' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
 -profile basc --subsample 10000 -resume
+
+
+# Test with multiplexed ITS data
