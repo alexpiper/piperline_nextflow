@@ -253,8 +253,8 @@ process validate_reads {
         cp ${reads[0]} data/${fastq_id}_R1_001.fastq.gz
         cp ${reads[1]} data/${fastq_id}_R2_001.fastq.gz
     else
-        seqtk sample -s"${subsample_seed}" ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
-        seqtk sample -s"${subsample_seed}" ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
+        seqtk sample -s"${params.subsample_seed}" ${reads[0]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R1_001.fastq.gz
+        seqtk sample -s"${params.subsample_seed}" ${reads[1]} "${params.subsample}" | pigz -p ${task.cpus} > data/${fastq_id}_R2_001.fastq.gz
     fi  
     
     # Get expected positions of elements from read_format
@@ -1094,10 +1094,17 @@ if (params.coding) {
             seqtab_cut <- seqtab_nochim
         }
         
-        # TODO: ADD PHMM HERE       
+        seqs <- Biostrings::DNAStringSet(getSequences(seqtab_cut))
+        names(seqs) <- getSequences(seqtab_cut)
+        
+        # Align against phmm if provided    
+        if(as.logical("${params.phmm}")){
+            model <- readRDS("${params.phmm}")
+            seqs <- taxreturn::map_to_model(seqs, model = model, min_score = 100, min_length = 100, shave = FALSE, check_frame = TRUE, kmer_threshold = 0.5, k=5, extra = "fill")
+        }
         
         #Filter sequences containing stop codons
-        seqs <- Biostrings::DNAStringSet(getSequences(seqtab_cut))
+        
         codon_filt <- codon_filter(seqs, genetic_code = "${params.genetic_code}") # Internal function
         seqtab_final <- seqtab_cut[,colnames(seqtab_cut) %in% codon_filt]                
         
@@ -1228,8 +1235,8 @@ if (params.reference) {
     if (params.taxassignment == 'rdp') {
         // TODO: we could combine these into the same script
         
-        process AssignTaxSpeciesRDP {
-            tag { "AssignTaxSpeciesRDP" }
+        process AssignTaxonomyRDP {
+            tag { "AssignTaxonomyRDP" }
             publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
             input:
@@ -1273,8 +1280,8 @@ if (params.reference) {
         }
 
     } else if (params.taxassignment == 'idtaxa') {
-        process TaxonomyIDTAXA {
-            tag { "TaxonomyIDTAXA" }
+        process AssignTaxonomyIDTAXA {
+            tag { "AssignTaxonomyIDTAXA" }
             publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
             input:
