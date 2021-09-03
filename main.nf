@@ -567,8 +567,8 @@ process Nfilter {
  *
  */
  
-// TODO: Add file renaming to append the primer to both if not present
-//TODO: add -e 1 or -e 2 for 1 or 2 mismatches. Needs cutadapt >v3
+// TODO:Drop single primer and multi primer workflow now that both can work with multicore
+// TODO: Add a ^ to the start of the primers to make it restrict left?
 if (params.lengthvar == false) {
     process cutadapt {
         tag { "filt_step2_${fastq_id}" }
@@ -591,23 +591,24 @@ if (params.lengthvar == false) {
 
         if [ "\${nprimer}" -ge 3 ];
         then
-        echo "More than one primer detected, demultiplexing (single core)";
+        echo "More than one primer detected, demultiplexing";
         cutadapt \\
             -g file:forwardP.fa \\
             -G file:reverseP.fa \\
-            -n 2  \\
+            --cores ${task.cpus} \\
+            -n 2 -e 1 \\
             --no-indels \\
             -o "${fastq_id}.{name}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"           
 
         else
-        echo "Single primer detected (multi-core)";
+        echo "Single primer detected";
         cutadapt \\
             -g "${params.fwdprimer}" \\
             -G "${params.revprimer}" \\
             --cores ${task.cpus} \\
-            -n 2  \\
+            -n 2 -e 1 \\
             --no-indels \\
             -o "${fastq_id}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
@@ -641,18 +642,19 @@ else if (params.lengthvar == true) {
 
         if [ "\${nprimer}" -ge 3 ];
         then
-        echo "More than one primer detected, demultiplexing (single-core)";
+        echo "More than one primer detected, demultiplexing";
         cutadapt \\
             -g file:forwardP.fa -a file:reverseP_rc.fa \\
             -G file:reverseP.fa -a file:forwardP_rc.fa\\
-            -n 2 \\
+            --cores ${task.cpus} \\
+            -n 2 -e 1 \\
             --no-indels \\
             -o "${fastq_id}.{name}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"       
 
         else
-        echo "Single primer detected (multi-core)";
+        echo "Single primer detected";
         fwd_rc=\$(cat forwardP_rc.fa | tail -1)
         rev_rc=\$(cat reverseP_rc.fa | tail -1)
         
@@ -1350,7 +1352,7 @@ if (params.reference) {
             colnames(boots) <- ranks
             rownames(boots) <- getSequences(seqtab)
             
-            if(nchar(as.character("${params.phylum}")) > 0) & !nchar(as.character("${params.blast_db}")) > 0)){
+            if(nchar(as.character("${params.species_db}")) > 0 && !nchar(as.character("${params.blast_db}")) > 0){
                #Further assign to species rank using exact matching
                 exact <- assignSpecies(seqtab, as.character("${params.species_db}"), allowMultiple = TRUE, tryRC = TRUE, verbose = FALSE) %>%
                     as_tibble(rownames = "OTU") %>%
@@ -1371,7 +1373,7 @@ if (params.reference) {
                   seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
                   as.matrix()
                   
-            } else if(!nchar(as.character("${params.phylum}")) > 0) & nchar(as.character("${params.blast_db}")) > 0)){
+            } else if(!nchar(as.character("${params.species_db}")) > 0 && nchar(as.character("${params.blast_db}")) > 0){
                 # Add species using BLAST
                 seqs <- taxreturn::char2DNAbin(colnames(seqtab))
                 names(seqs) <- colnames(seqtab) 
@@ -1394,7 +1396,7 @@ if (params.reference) {
                   seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
                   as.matrix()  
                   
-            } else if (nchar(as.character("${params.phylum}")) > 0) & nchar(as.character("${params.blast_db}")) > 0)){
+            } else if(nchar(as.character("${params.species_db}")) > 0 && nchar(as.character("${params.blast_db}")) > 0){
               #TODO add both?
               stop("Only one of param.species, or param.blast_db should be provided")
             } else {
