@@ -73,8 +73,8 @@ def helpMessage() {
       --maxMergedLen                Maximum length of fragment *after* merging                              
 
     Taxonomic arguments (optional):
-      --species                     Specify path to fasta file. See dada2 addSpecies() for more detail.  
-      --blastdb                     Specify path to fasta file.
+      --species_db                     Specify path to fasta file. See dada2 addSpecies() for more detail.  
+      --blast_db                     Specify path to fasta file.
       
     Sample and taxon filtering parameters (optional):
       --min_sample_reads            integer. The minimum number of reads a sample must have to be retained
@@ -198,7 +198,7 @@ summary['rmPhiX']         = params.rmPhiX
 summary['minOverlap']     = params.minOverlap
 summary['maxMismatch']    = params.maxMismatch
 summary['trimOverhang']   = params.trimOverhang
-summary['species']        = params.species
+summary['species_db']     = params.species_db
 summary['dadaOpt']        = params.dadaOpt
 summary['pool']           = params.pool
 summary['qualityBinning'] = params.qualityBinning
@@ -539,9 +539,9 @@ process Nfilter {
     Rprimer_name <- unlist(stringr::str_split("${params.revprimer_name}", ";"))
     
     Fprimers <- unlist(stringr::str_split("${params.fwdprimer}", ";"))
-    names(Fprimers) <- Fprimer_name
+    names(Fprimers) <- paste0(Fprimer_name,"-", Rprimer_name)
     Rprimers <- unlist(stringr::str_split("${params.revprimer}", ";"))
-    names(Rprimers) <- Rprimer_name
+    names(Rprimers) <- paste0(Fprimer_name,"-", Rprimer_name)
     
     Biostrings::writeXStringSet(Biostrings::DNAStringSet(Fprimers), "forwardP.fa")
     Biostrings::writeXStringSet(Biostrings::DNAStringSet(Rprimers), "reverseP.fa")
@@ -549,10 +549,10 @@ process Nfilter {
     # Write out fasta of reverse complement primers
     # Used for checking for read-through into the other end of molecule for variable length markers
     fwd_rc <- sapply(Fprimers, dada2:::rc)
-    names(fwd_rc) <- Fprimer_name
+    names(fwd_rc) <- paste0(Fprimer_name,"-", Rprimer_name)
 
     rev_rc <- sapply(Rprimers, dada2:::rc)
-    names(rev_rc) <- Rprimer_name
+    names(rev_rc) <- paste0(Fprimer_name,"-", Rprimer_name)
     
     Biostrings::writeXStringSet(Biostrings::DNAStringSet(fwd_rc), "forwardP_rc.fa")
     Biostrings::writeXStringSet(Biostrings::DNAStringSet(rev_rc), "reverseP_rc.fa")
@@ -568,10 +568,11 @@ process Nfilter {
  */
  
 // TODO: Add file renaming to append the primer to both if not present
-//TODO: calculate the -e parameter in order to allow 1 mismatch (1/max primer length)
+//TODO: add -e 1 or -e 2 for 1 or 2 mismatches. Needs cutadapt >v3
 if (params.lengthvar == false) {
     process cutadapt {
         tag { "filt_step2_${fastq_id}" }
+
 
         input:
         set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
@@ -586,15 +587,15 @@ if (params.lengthvar == false) {
         script:
         """
         #!/bin/bash
-        nprimer="\$(wc -l forwardP.fa)"
+        nprimer="\$(cat forwardP.fa | wc -l)"
 
-        if [ "\${nprimer}" \\> 3 ];
+        if [ "\${nprimer}" -ge 3 ];
         then
         echo "More than one primer detected, demultiplexing (single core)";
         cutadapt \\
             -g file:forwardP.fa \\
             -G file:reverseP.fa \\
-            -n 2 \\
+            -n 2  \\
             --no-indels \\
             -o "${fastq_id}.{name}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
@@ -606,7 +607,8 @@ if (params.lengthvar == false) {
             -g "${params.fwdprimer}" \\
             -G "${params.revprimer}" \\
             --cores ${task.cpus} \\
-            -n 2 \\
+            -n 2  \\
+            --no-indels \\
             -o "${fastq_id}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
@@ -622,7 +624,7 @@ else if (params.lengthvar == true) {
         tag { "varfilt_step2_${fastq_id}" }
 
         input:
-        set set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
+        set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
         file("forwardP.fa") from forprimers
         file("reverseP.fa") from revprimers
         file("forwardP_rc.fa") from rcfor
@@ -635,15 +637,14 @@ else if (params.lengthvar == true) {
         script:
         """
         #!/bin/bash
-        nprimer="\$(wc -l forwardP.fa)"
+        nprimer="\$(cat forwardP.fa | wc -l)"
 
-        if [ "\${nprimer}" \\> 3 ];
+        if [ "\${nprimer}" -ge 3 ];
         then
         echo "More than one primer detected, demultiplexing (single-core)";
         cutadapt \\
             -g file:forwardP.fa -a file:reverseP_rc.fa \\
             -G file:reverseP.fa -a file:forwardP_rc.fa\\
-            --cores ${task.cpus} \\
             -n 2 \\
             --no-indels \\
             -o "${fastq_id}.{name}.R1.cutadapt.fastq.gz" \\
@@ -656,10 +657,11 @@ else if (params.lengthvar == true) {
         rev_rc=\$(cat reverseP_rc.fa | tail -1)
         
         cutadapt \\
-            -g "${params.fwdprimer}" -a ${rev_rc}\\
-            -G "${params.revprimer}" -A ${fwd_rc}\\
+            -g "${params.fwdprimer}" -a "\${rev_rc}"\\
+            -G "${params.revprimer}" -A "\${fwd_rc}"\\
             --cores ${task.cpus} \\
-            -n 2 \\
+            -n 2  \\
+            --no-indels \\
             -o "${fastq_id}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
@@ -690,8 +692,8 @@ process FilterAndTrim {
 
     output:
     set val(fastq_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
-    file "*.R1.filtered.fastq.gz" optional true into forReads
-    file "*.R2.filtered.fastq.gz" optional true into revReads
+    file "*.R1.filtered.fastq.gz" optional true into forReads, forReadsErr
+    file "*.R2.filtered.fastq.gz" optional true into revReads, revReadsErr
     file "*.trimmed.txt" into trimTracking
 
     script:
@@ -701,6 +703,7 @@ process FilterAndTrim {
     require(ShortRead); packageVersion("ShortRead")
     require(Biostrings); packageVersion("Biostrings")
     require(stringr); packageVersion("stringr")
+    require(dplyr); packageVersion("dplyr")
     
     fastqFs <- sort(list.files(pattern="*.R1.cutadapt.fastq.gz"))
     fastqFs <- fastqFs[!stringr::str_detect(fastqFs, "unknown")]
@@ -725,9 +728,14 @@ process FilterAndTrim {
                         verbose = TRUE,
                         matchIDs = as.logical(${params.matchIDs}),
                         multithread = ${task.cpus})
+                        
     #Change input read counts to actual raw read counts
-    out3 <- cbind(out1, out2)
-    colnames(out3) <- c('input', 'filterN', 'cutadapt', 'filtered')
+    out1 <- out1 %>% 
+        as.data.frame() %>%
+        dplyr::slice(rep(dplyr::row_number(), nrow(out2)))
+    out3 <- cbind(out1, out2)      
+    rownames(out3) <- rownames(out2)
+    colnames(out3) <- c('cutadapt', 'filtered', 'input', 'filterN')    
     write.csv(out3, paste0("${fastq_id}", ".trimmed.txt"))
     """
 }
@@ -808,8 +816,8 @@ process LearnErrors {
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
-    file fReads from forReads.collect()
-    file rReads from revReads.collect()
+    file fReads from forReadsErr.collect()
+    file rReads from revReadsErr.collect()
 
     output:
     file "errorsF.RDS" into errorsFor
@@ -875,12 +883,9 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         tag { "PoolSamplesInferDerepAndMerge" }
         publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
-        // TODO: filteredReads channel has ID and two files, should fix this
-        // with a closure, something like  { it[1:2] }, or correct the channel
-        // as the ID can't be used anyway
-
         input:
-        file filts from filteredReads.collect( )
+        file filtFs from forReads.collect()
+        file filtRs from revReads.collect()
         file errFor from errorsFor
         file errRev from errorsRev
 
@@ -1053,8 +1058,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
  *
  */
 
-// TODO: if PHMM provided, align to phmm, output this instead of later alignment below
-if (params.coding) {
+if (params.coding == true) {
     process coding_asv_filter {
         tag { "coding_asv_filter" }
         publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
@@ -1098,7 +1102,7 @@ if (params.coding) {
         names(seqs) <- getSequences(seqtab_cut)
         
         # Align against phmm if provided    
-        if(as.logical("${params.phmm}")){
+            if(nchar(as.character("${params.phmm}")) > 0){
             model <- readRDS("${params.phmm}")
             seqs <- taxreturn::map_to_model(seqs, model = model, min_score = 100, min_length = 100, shave = FALSE, check_frame = TRUE, kmer_threshold = 0.5, k=5, extra = "fill")
         }
@@ -1150,7 +1154,7 @@ if (params.coding) {
         file st from seqTable
 
         output:
-        file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output
+        file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
 
         script:
         chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
@@ -1264,7 +1268,7 @@ if (params.reference) {
                                     verbose = TRUE)
             boots <- tax\$boot
                
-            if(as.logical("${params.species}")){
+            if(as.logical("${params.species_db}")){
                 # Add species using exact matching
                 tax <- addSpecies(tax\$tax, "${sp}",
                                  tryRC = TRUE,
@@ -1300,6 +1304,8 @@ if (params.reference) {
             require(DECIPHER); packageVersion("DECIPHER")
             require(tidyverse); packageVersion("tidyverse")
             require(seqateurs); packageVersion("seqateurs")
+            require(stringr); packageVersion("stringr")
+            require(stringi); packageVersion("stringi")
             
             seqtab <- readRDS("${st}")
 
@@ -1331,10 +1337,10 @@ if (params.reference) {
               stri_list2matrix(byrow=TRUE, fill=NA) %>%
               magrittr::set_colnames(ranks) %>%
               as.data.frame() %>%
-              magrittr::set_rownames(getSequences(seqtab_final)) %T>%
-              write.csv("output/logs/idtaxa_results.csv") %>%  #Write out logfile with confidence levels
+              magrittr::set_rownames(getSequences(seqtab)) %T>%
+              write.csv("idtaxa_results.csv") %>%  #Write out logfile with confidence levels
               mutate_all(str_replace,pattern="(?:.(?!_))+\$", replacement="") %>%
-              magrittr::set_rownames(getSequences(seqtab_final)) 
+              magrittr::set_rownames(getSequences(seqtab)) 
 
             boots <- t(sapply(ids, function(x) {
                     m <- match(ranks, x\$rank)
@@ -1344,9 +1350,9 @@ if (params.reference) {
             colnames(boots) <- ranks
             rownames(boots) <- getSequences(seqtab)
             
-            if(as.logical("${params.species}") & !as.logical("${params.blastdb}")){
+            if(nchar(as.character("${params.phylum}")) > 0) & !nchar(as.character("${params.blast_db}")) > 0)){
                #Further assign to species rank using exact matching
-                exact <- assignSpecies(seqtab_final, as.character("${params.species}"), allowMultiple = TRUE, tryRC = TRUE, verbose = FALSE) %>%
+                exact <- assignSpecies(seqtab, as.character("${params.species_db}"), allowMultiple = TRUE, tryRC = TRUE, verbose = FALSE) %>%
                     as_tibble(rownames = "OTU") %>%
                     filter(!is.na(Species)) %>%
                     dplyr::mutate(binomial = paste0(Genus," ",Species)) %>%
@@ -1365,13 +1371,13 @@ if (params.reference) {
                   seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
                   as.matrix()
                   
-            } else if(!as.logical("${params.species}") & as.logical("${params.blastdb}")){
+            } else if(!nchar(as.character("${params.phylum}")) > 0) & nchar(as.character("${params.blast_db}")) > 0)){
                 # Add species using BLAST
-                seqs <- taxreturn::char2DNAbin(colnames(seqtab_final))
-                names(seqs) <- colnames(seqtab_final) 
+                seqs <- taxreturn::char2DNAbin(colnames(seqtab))
+                names(seqs) <- colnames(seqtab) 
                 
                 # TODO: allow editing of these BLAST parameters
-                blast_spp <- blast_assign_species(query=seqs, db=as.character("${params.blastdb}"), identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5, ranks=ranks, delim=";") %>%
+                blast_spp <- blast_assign_species(query=seqs, db=as.character("${params.blast_db}"), identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5, ranks=ranks, delim=";") %>%
                   dplyr::rename(blast_genus = Genus, blast_spp = Species) %>%
                   dplyr::filter(!is.na(blast_spp))
                   
@@ -1388,9 +1394,9 @@ if (params.reference) {
                   seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
                   as.matrix()  
                   
-            } else if (as.logical("${params.species}") & as.logical("${params.blastdb}")){
+            } else if (nchar(as.character("${params.phylum}")) > 0) & nchar(as.character("${params.blast_db}")) > 0)){
               #TODO add both?
-              stop("Only one of param.species, or param.blastdb should be provided")
+              stop("Only one of param.species, or param.blast_db should be provided")
             } else {
               tax_final <- tax
             }

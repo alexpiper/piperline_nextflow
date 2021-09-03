@@ -32,20 +32,22 @@ for d in ./*/ ; do
 (cd "$d" && mv *.fastq.gz ../. );
 done
 
-cd /group/pathogens/Alexp/Metabarcoding/test/COI
+cd /group/pathogens/Alexp/Metabarcoding/piperline_testing/imap_tests/COI
 nextflow pull alexpiper/piperline
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
 --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
 --reference 'idtaxa_bftrimmed.rds' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
 -profile basc --subsample 10000 -resume
 
-# Run dev version
 
-cd /group/pathogens/Alexp/Metabarcoding/test/COI
-nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
---fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
---reference 'idtaxa_bftrimmed.rds' --blastdb 'insecta_hierarchial_bftrimmed.fa.gz' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
+# Test with multiplexed ITS data
+cd /group/pathogens/Alexp/Metabarcoding/piperline_testing/imap_tests/ITS
+#nextflow pull alexpiper/piperline
+nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar true \
+--fwdprimer 'GGTCATTTAGAGGAAGTAA;ARTCTTTGAACGCACATTG;GTGAAATTGYTRAAAGGGAA;CARGAYATGATYAACGAGG;GTTCGAGGCTGGTATCTCC' --fwdprimer_name 'ITS1Fngs;ITS7ngsOphio;LF402F;CALngsF1;EF1087Fngs' \
+--revprimer 'TTYRCKRCGTTCTTCATCG;CCTSCSCTTANTDATATGC;CGATCGATTTGCACGTCAG;GRATCATCTCRTCVACCTC;GTCTCRATACGGCCRAC' --revprimer_name 'ITS2ngs;ITS4ngsUni;LR5Fungngs;CALngsR1;EF646Rngs' \
+--reference '/group/pathogens/Alexp/Metabarcoding/piperline_testing/imap_tests/ITS/reference/CTedited_UNITE_RefS_Aug2021.rds' --samplesheet 'SampleSheet.csv' --runparams 'runParameters.xml' --coding false \
 -profile basc --subsample 10000 -resume
 
 
-# Test with multiplexed ITS data
+
