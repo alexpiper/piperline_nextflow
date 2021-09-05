@@ -587,11 +587,6 @@ if (params.lengthvar == false) {
         script:
         """
         #!/bin/bash
-        nprimer="\$(cat forwardP.fa | wc -l)"
-
-        if [ "\${nprimer}" -ge 3 ];
-        then
-        echo "More than one primer detected, demultiplexing";
         cutadapt \\
             -g file:forwardP.fa \\
             -G file:reverseP.fa \\
@@ -602,19 +597,6 @@ if (params.lengthvar == false) {
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"           
 
-        else
-        echo "Single primer detected";
-        cutadapt \\
-            -g "${params.fwdprimer}" \\
-            -G "${params.revprimer}" \\
-            --cores ${task.cpus} \\
-            -n 2 -e 1 \\
-            --no-indels \\
-            -o "${fastq_id}.R1.cutadapt.fastq.gz" \\
-            -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
-            "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
-        fi;
-        
         # Could potentially set a new fastq_id here, then output from env()
         """
     }
@@ -638,11 +620,6 @@ else if (params.lengthvar == true) {
         script:
         """
         #!/bin/bash
-        nprimer="\$(cat forwardP.fa | wc -l)"
-
-        if [ "\${nprimer}" -ge 3 ];
-        then
-        echo "More than one primer detected, demultiplexing";
         cutadapt \\
             -g file:forwardP.fa -a file:reverseP_rc.fa \\
             -G file:reverseP.fa -a file:forwardP_rc.fa\\
@@ -653,22 +630,6 @@ else if (params.lengthvar == true) {
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"       
 
-        else
-        echo "Single primer detected";
-        fwd_rc=\$(cat forwardP_rc.fa | tail -1)
-        rev_rc=\$(cat reverseP_rc.fa | tail -1)
-        
-        cutadapt \\
-            -g "${params.fwdprimer}" -a "\${rev_rc}"\\
-            -G "${params.revprimer}" -A "\${fwd_rc}"\\
-            --cores ${task.cpus} \\
-            -n 2  \\
-            --no-indels \\
-            -o "${fastq_id}.R1.cutadapt.fastq.gz" \\
-            -p "${fastq_id}.R2.cutadapt.fastq.gz" \\
-            "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
-        fi;
-        
         # Could potentially set a new fastq_id here?
         """
     }    
@@ -1692,6 +1653,9 @@ process output_unfiltered {
 
     tax <- readRDS("${tax}")
     colnames(tax) <- stringr::str_to_lower(colnames(tax))
+    
+    #TODO: Need to make sure if these files exist or not!
+    if(
     seqs <- Biostrings::readDNAStringSet("${aln}")
     tree <- read.tree(file = "${tree}")
 

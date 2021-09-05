@@ -42,7 +42,7 @@ nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar fal
 
 # Test with multiplexed ITS data
 cd /group/pathogens/Alexp/Metabarcoding/piperline_testing/imap_tests/ITS
-#nextflow pull alexpiper/piperline
+nextflow pull alexpiper/piperline
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar true \
 --fwdprimer 'GGTCATTTAGAGGAAGTAA;ARTCTTTGAACGCACATTG;GTGAAATTGYTRAAAGGGAA;CARGAYATGATYAACGAGG;GTTCGAGGCTGGTATCTCC' --fwdprimer_name 'ITS1Fngs;ITS7ngsOphio;LF402F;CALngsF1;EF1087Fngs' \
 --revprimer 'TTYRCKRCGTTCTTCATCG;CCTSCSCTTANTDATATGC;CGATCGATTTGCACGTCAG;GRATCATCTCRTCVACCTC;GTCTCRATACGGCCRAC' --revprimer_name 'ITS2ngs;ITS4ngsUni;LR5Fungngs;CALngsR1;EF646Rngs' \
