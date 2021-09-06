@@ -368,7 +368,7 @@ process create_samdf {
  *
  */
 
-process runFastQC {
+process fastqc {
     tag { "rFQC.${fastq_id}" }
     publishDir "${params.outdir}/qc/FASTQC-prefilter", mode: "copy", overwrite: true
 
@@ -385,8 +385,8 @@ process runFastQC {
 
 
 // TODO: combine MultiQC reports and split by directory (no need for two)
-process runMultiQC {
-    tag { "runMultiQC" }
+process multiqc {
+    tag { "multiqc" }
     publishDir "${params.outdir}/qc/MultiQC-prefilter", mode: 'copy', overwrite: true
 
     input:
@@ -647,7 +647,7 @@ else if (params.lengthvar == true) {
  *
  */
  
-process FilterAndTrim {
+process filter_and_trim {
     tag { "filt_step3_${fastq_id}" }
 
     input:
@@ -710,8 +710,8 @@ process FilterAndTrim {
  *
  */
 
-process runFastQC_postfilterandtrim {
-    tag { "rFQC_post_FT.${fastq_id}" }
+process fastqc_filtered {
+    tag { "fastqc_filtered.${fastq_id}" }
     publishDir "${params.outdir}/qc/FastQC-postfilter", mode: "copy", overwrite: true
 
     input:
@@ -725,8 +725,8 @@ process runFastQC_postfilterandtrim {
     """
 }
 
-process runMultiQC_postfilterandtrim {
-    tag { "runMultiQC_postfilterandtrim" }
+process multiqc_filtered {
+    tag { "multiqc_filtered" }
     publishDir "${params.outdir}/qc/MultiQC-postfilter", mode: 'copy', overwrite: true
 
     input:
@@ -746,8 +746,8 @@ process runMultiQC_postfilterandtrim {
 }
 
 // TODO: Make this work with demultiplexing
-process mergeTrimmedTable {
-    tag { "mergeTrimmedTable" }
+process merge_trimmed_table {
+    tag { "merge_trimmed_table" }
     publishDir "${params.outdir}/csv", mode: "copy", overwrite: true
 
     input:
@@ -774,8 +774,8 @@ process mergeTrimmedTable {
  *
  */
 
-process LearnErrors {
-    tag { "LearnErrors" }
+process learn_errors_dada2 {
+    tag { "learn_errors_dada2" }
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
@@ -1620,8 +1620,8 @@ process ReadTracking {
  *
  */
  
-process make_ps_tree {
-    tag { "make_ps_tree" }
+process make_phyloseq {
+    tag { "make_phyloseq" }
     publishDir "${params.outdir}/results/unfiltered", mode: "link", overwrite: true
 
     input:
@@ -1633,95 +1633,74 @@ process make_ps_tree {
     file aln from aln_to_output
     
     output:
-    file "ps.rds" into ps_to_filter
-    
-    when:
-    tree_to_output != false
-
-    script:
-    """
-    #!/usr/bin/env Rscript
-    require(phyloseq); packageVersion("phyloseq")
-    require(tidyverse); packageVersion("tidyverse")
-    require(ape); packageVersion("ape")
-    
-    # Read in files
-    seqtab <- readRDS("${st}")
-    
-    #Extract start of sample names only
-    rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
-
-    tax <- readRDS("${tax}")
-    colnames(tax) <- stringr::str_to_lower(colnames(tax))
-    seqs <- Biostrings::readDNAStringSet("${aln}")
-    tree <- read.tree(file = "${tree}")
-
-    samdf <- read.csv("${samdf}", header=TRUE) %>%
-      filter(!duplicated(sample_id)) %>%
-      magrittr::set_rownames(.\$sample_id) 
-    
-    # Create phyloseq object
-    ps <- phyloseq(tax_table(tax), 
-                   sample_data(samdf),
-                   otu_table(seqtab, taxa_are_rows = FALSE),
-                   phy_tree(tree),
-                   refseq(seqs))    
-    
-    saveRDS(ps, "ps.rds")
-    """
-}
-
-process make_ps {
-    tag { "make_ps" }
-    publishDir "${params.outdir}/results/unfiltered", mode: "link", overwrite: true
-
-    input:
-    file st from seqtab_to_output
-    file samdf from samdf_to_output
-    file tax from taxtab_to_output
-    file bt from bootstrapFinal
-    file aln from seqsToAln
-    
-    output:
     file "ps.rds" into ps_to_filter,ps_to_export
     
-    when:
-    tree_to_output = false
-
     script:
-    """
-    #!/usr/bin/env Rscript
-    require(phyloseq); packageVersion("phyloseq")
-    require(tidyverse); packageVersion("tidyverse")
-    require(ape); packageVersion("ape")
-    
-    # Read in files
-    seqtab <- readRDS("${st}")
-    
-    #Extract start of sample names only
-    rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
+    if (tree_to_output != false)
+        """
+        #!/usr/bin/env Rscript
+        require(phyloseq); packageVersion("phyloseq")
+        require(tidyverse); packageVersion("tidyverse")
+        require(ape); packageVersion("ape")
+        
+        # Read in files
+        seqtab <- readRDS("${st}")
+        
+        #Extract start of sample names only
+        rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
 
-    tax <- readRDS("${tax}")
-    colnames(tax) <- stringr::str_to_lower(colnames(tax))
-    seqs <- Biostrings::readDNAStringSet("${aln}")
+        tax <- readRDS("${tax}")
+        colnames(tax) <- stringr::str_to_lower(colnames(tax))
+        seqs <- Biostrings::readDNAStringSet("${aln}")
+        tree <- read.tree(file = "${tree}")
 
-    samdf <- read.csv("${samdf}", header=TRUE) %>%
-      filter(!duplicated(sample_id)) %>%
-      magrittr::set_rownames(.\$sample_id) 
-    
-    # Create phyloseq object
-    ps <- phyloseq(tax_table(tax), 
-                   sample_data(samdf),
-                   otu_table(seqtab, taxa_are_rows = FALSE),
-                   refseq(seqs))    
-    
-    saveRDS(ps, "ps.rds")
-    """
+        samdf <- read.csv("${samdf}", header=TRUE) %>%
+          filter(!duplicated(sample_id)) %>%
+          magrittr::set_rownames(.\$sample_id) 
+        
+        # Create phyloseq object
+        ps <- phyloseq(tax_table(tax), 
+                       sample_data(samdf),
+                       otu_table(seqtab, taxa_are_rows = FALSE),
+                       phy_tree(tree),
+                       refseq(seqs))    
+        
+        saveRDS(ps, "ps.rds")
+        """
+    else
+        """
+        #!/usr/bin/env Rscript
+        require(phyloseq); packageVersion("phyloseq")
+        require(tidyverse); packageVersion("tidyverse")
+        require(ape); packageVersion("ape")
+        
+        # Read in files
+        seqtab <- readRDS("${st}")
+        
+        #Extract start of sample names only
+        rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
+
+        tax <- readRDS("${tax}")
+        colnames(tax) <- stringr::str_to_lower(colnames(tax))
+        seqs <- Biostrings::readDNAStringSet("${aln}")
+
+        samdf <- read.csv("${samdf}", header=TRUE) %>%
+          filter(!duplicated(sample_id)) %>%
+          magrittr::set_rownames(.\$sample_id) 
+        
+        # Create phyloseq object
+        ps <- phyloseq(tax_table(tax), 
+                       sample_data(samdf),
+                       otu_table(seqtab, taxa_are_rows = FALSE),
+                       refseq(seqs))    
+        
+        saveRDS(ps, "ps.rds")
+        """
 }
 
 // TODO: how to output pdf to  figs?
-process filter_ps {
-    tag { "filter_ps" }
+process filter_phyloseq {
+    tag { "filter_phyloseq" }
     publishDir "${params.outdir}/results/filtered", mode: "link", overwrite: true
 
     input:
