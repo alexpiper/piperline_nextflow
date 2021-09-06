@@ -1446,8 +1446,7 @@ if (params.runTree && params.lengthvar == false) {
         file tree from treeGTRFile
 
         output:
-        file "rooted.newick" into rootedTreeFile, rooted_to_output
-        // need to deadend the other channels, they're hanging here
+        file "rooted.newick" into tree_to_output
 
         script:
         """
@@ -1466,7 +1465,6 @@ if (params.runTree && params.lengthvar == false) {
     // Note these are caught downstream
     aln_to_output = false
     tree_to_output = false
-    rooted_to_output = false
 }
 
 
@@ -1563,6 +1561,14 @@ process create_samdf {
     # Create samplesheet containing samples and run parameters for all runs
     samdf <- dplyr::distinct(seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4"))
 
+    # Add fcid if not present
+    samdf <- samdf %>%
+      dplyr::mutate(
+      sample_id = case_when(
+        !stringr::str_detect(sample_id, fcid) ~ paste0(fcid,"_", sample_id),
+        TRUE ~ sample_id
+      ))
+
     # Check if samples match samplesheet
     fastqFs <- read_delim("fastq_list.txt", delim=" ", col_names=c("sample_id", "fcid", "sample_name", "extraction_rep", "amp_rep")) %>%
         dplyr::filter(!stringr::str_detect(sample_id, "Undetermined")) %>%
@@ -1586,11 +1592,6 @@ process create_samdf {
     
     samdf <- samdf %>%
       dplyr::mutate(
-      # Add fcid if not present
-      sample_id = case_when(
-        !stringr::str_detect(sample_id, fcid) ~ paste0(fcid,"_", sample_id),
-        TRUE ~ sample_id
-      ),
       for_primer_seq = "${params.fwdprimer}",
       rev_primer_seq = "${params.revprimer}",
       pcr_primers = primer_names,
@@ -1603,7 +1604,7 @@ process create_samdf {
      group_by(sample_id) %>%
      group_split() %>%
      purrr::map(function(x){
-       if(any(str_detect(x\$pcr_primers, ";"))){
+       #if(any(str_detect(x\$pcr_primers, ";"))){
          primer_names <- unlist(str_split(unique(x\$pcr_primers), ";"))
          x %>%
            mutate(count = length(primer_names)) %>% #Replicate the samples
@@ -1613,7 +1614,7 @@ process create_samdf {
                   rev_primer_seq = unlist(str_split(unique(x\$rev_primer_seq), ";")),
                   sample_id = paste0(sample_id, "_", pcr_primers)
                 )
-       } else (x)
+       #} else (x)
      }) %>%
       bind_rows()
 
@@ -1654,7 +1655,7 @@ process make_phyloseq {
     file samdf from samdf_to_output
     file tax from taxtab_to_output
     file bt from bootstrapFinal
-    file tree from rooted_to_output
+    file tree from tree_to_output
     file aln from aln_to_output
     
     output:
@@ -1673,7 +1674,7 @@ process make_phyloseq {
         
         #Extract start of sample names only
         rownames(seqtab) <- rownames(seqtab) %>%
-                stringr::str_remove(".R[1-2].*\\\\.fastq.gz") %>%
+                stringr::str_remove(".R[1-2]\\\\..*\\\\.fastq.gz") %>%
                 stringr::str_replace("_S[0-9].*\\\\.", "_")
                 
         tax <- readRDS("${tax}")
@@ -1706,7 +1707,7 @@ process make_phyloseq {
         
         #Extract start of sample names only
         rownames(seqtab) <- rownames(seqtab) %>%
-                stringr::str_remove(".R[1-2].*\\\\.fastq.gz") %>%
+                stringr::str_remove(".R[1-2]\\\\..*\\\\.fastq.gz") %>%
                 stringr::str_replace("_S[0-9].*\\\\.", "_")
                 
         tax <- readRDS("${tax}")
