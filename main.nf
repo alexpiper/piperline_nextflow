@@ -503,7 +503,7 @@ else if (params.calc_switchrate == false) {
  * Step 2: Filter N bases
  *
  */
-process Nfilter {
+process nfilter {
     tag { "nfilter_${fastq_id}" }
 
     input:
@@ -774,8 +774,8 @@ process merge_trimmed_table {
  *
  */
 
-process learn_errors_dada2 {
-    tag { "learn_errors_dada2" }
+process dada2_learn_errors {
+    tag { "dada2_learn_errors" }
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
@@ -842,8 +842,8 @@ process learn_errors_dada2 {
 
 if (params.pool == "T" || params.pool == 'pseudo') {
 
-    process PoolSamplesInferDerepAndMerge {
-        tag { "PoolSamplesInferDerepAndMerge" }
+    process dada2_pooled {
+        tag { "dada2_pooled" }
         publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
@@ -911,8 +911,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         }
 } else {
     // pool = F, process per sample
-    process PerSampleInferDerepAndMerge {
-        tag { "PerSampleInferDerepAndMerge" }
+    process dada2_persample {
+        tag { "dada2_persample" }
         publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
@@ -958,8 +958,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         """
     }
 
-    process mergeDadaRDS {
-        tag { "mergeDadaRDS" }
+    process merge_dada_rds {
+        tag { "merge_dada_rds" }
         publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
@@ -984,8 +984,8 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         '''
     }
 
-    process SequenceTable {
-        tag { "SequenceTable" }
+    process make_seqtab {
+        tag { "make_seqtab" }
         publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
@@ -1202,8 +1202,8 @@ if (params.reference) {
     if (params.taxassignment == 'rdp') {
         // TODO: we could combine these into the same script
         
-        process AssignTaxonomyRDP {
-            tag { "AssignTaxonomyRDP" }
+        process assign_tax_rdp {
+            tag { "assign_tax_rdp" }
             publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
             input:
@@ -1247,8 +1247,8 @@ if (params.reference) {
         }
 
     } else if (params.taxassignment == 'idtaxa') {
-        process AssignTaxonomyIDTAXA {
-            tag { "AssignTaxonomyIDTAXA" }
+        process assign_tax_idtaxa {
+            tag { "assign_tax_idtaxa" }
             publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
             input:
@@ -1424,8 +1424,8 @@ if (params.runTree && params.lengthvar == false) {
 
     if (params.aligner == 'DECIPHER') {
 
-        process AlignReadsDECIPHER {
-            tag { "AlignReadsDECIPHER" }
+        process align_seqs_decipher {
+            tag { "align_seqs_decipher" }
             publishDir "${params.outdir}/fasta", mode: "copy", overwrite: true
             errorStrategy 'ignore'
 
@@ -1460,8 +1460,8 @@ if (params.runTree && params.lengthvar == false) {
 
     if (params.runTree == 'phangorn') {
 
-        process GenerateTreePhangorn {
-            tag { "GenerateTreePhangorn" }
+        process make_tree_phangorn {
+            tag { "make_tree_phangorn" }
             publishDir "${params.outdir}/trees", mode: "copy", overwrite: true
 
             input:
@@ -1496,8 +1496,8 @@ if (params.runTree && params.lengthvar == false) {
         }
     } else if (params.runTree == 'fasttree') {
 
-        process GenerateTreeFasttree {
-            tag { "GenerateTreeFasttree" }
+        process make_tree_fasttree {
+            tag { "make_tree_fasttree" }
             publishDir "${params.outdir}/trees", mode: "copy", overwrite: true
 
             input:
@@ -1520,8 +1520,8 @@ if (params.runTree && params.lengthvar == false) {
         // dead-end channels generated above
     }
 
-    process RootTree {
-        tag { "RootTree" }
+    process root_tree {
+        tag { "root_tree" }
         publishDir "${params.outdir}/trees", mode: "link"
 
         input:
@@ -1559,8 +1559,8 @@ if (params.runTree && params.lengthvar == false) {
  */
 
 // TODO: add the results of the seqtable tracking
-process ReadTracking {
-    tag { "ReadTracking" }
+process track_reads {
+    tag { "track_reads" }
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
@@ -1682,7 +1682,6 @@ process make_phyloseq {
 
         tax <- readRDS("${tax}")
         colnames(tax) <- stringr::str_to_lower(colnames(tax))
-        seqs <- Biostrings::readDNAStringSet("${aln}")
 
         samdf <- read.csv("${samdf}", header=TRUE) %>%
           filter(!duplicated(sample_id)) %>%
@@ -1691,8 +1690,8 @@ process make_phyloseq {
         # Create phyloseq object
         ps <- phyloseq(tax_table(tax), 
                        sample_data(samdf),
-                       otu_table(seqtab, taxa_are_rows = FALSE),
-                       refseq(seqs))    
+                       otu_table(seqtab, taxa_are_rows = FALSE)
+                       )    
         
         saveRDS(ps, "ps.rds")
         """
