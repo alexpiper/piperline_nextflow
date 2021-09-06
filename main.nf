@@ -1620,8 +1620,8 @@ process ReadTracking {
  *
  */
  
-process output_unfiltered {
-    tag { "output_unfiltered" }
+process make_ps_tree {
+    tag { "make_ps_tree" }
     publishDir "${params.outdir}/results/unfiltered", mode: "link", overwrite: true
 
     input:
@@ -1633,34 +1633,29 @@ process output_unfiltered {
     file aln from aln_to_output
     
     output:
-    file "*.rds"
-    file "*.csv"
-    file "*.fasta"
-    file "ps.rds" into output_to_filter
+    file "ps.rds" into ps_to_filter
+    
+    when:
+    tree_to_output != false
 
     script:
     """
     #!/usr/bin/env Rscript
     require(phyloseq); packageVersion("phyloseq")
-    require(seqateurs); packageVersion("seqateurs")
     require(tidyverse); packageVersion("tidyverse")
     require(ape); packageVersion("ape")
     
     # Read in files
     seqtab <- readRDS("${st}")
+    
     #Extract start of sample names only
     rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
 
     tax <- readRDS("${tax}")
     colnames(tax) <- stringr::str_to_lower(colnames(tax))
-    
-    #TODO: Need to make sure if these files exist or not!
-    if(
     seqs <- Biostrings::readDNAStringSet("${aln}")
     tree <- read.tree(file = "${tree}")
 
-    # Load sample information from channel - Need to add channel at start creating this
-    # If not provided make a new one from a template? - Do this at start?
     samdf <- read.csv("${samdf}", header=TRUE) %>%
       filter(!duplicated(sample_id)) %>%
       magrittr::set_rownames(.\$sample_id) 
@@ -1673,57 +1668,73 @@ process output_unfiltered {
                    refseq(seqs))    
     
     saveRDS(ps, "ps.rds")
-    
-    #Export raw csv
-    speedyseq::psmelt(ps) %>%
-      filter(Abundance > 0) %>%
-      dplyr::select(-Sample) %>%
-      write_csv("raw_combined.csv")
-  
-    #Export species level summary
-    seqateurs::summarise_taxa(ps, "species", "sample_id") %>%
-      spread(key="sample_id", value="totalRA") %>%
-      write.csv(file = "spp_sum_unfiltered.csv")
-      
-    #Export genus level summary
-    seqateurs::summarise_taxa(ps, "genus", "sample_id") %>%
-      spread(key="sample_id", value="totalRA") %>%
-      write.csv(file = "gen_sum_unfiltered.csv")
-
-    #Output newick tree
-    write.tree(phy_tree(ps), file="tree_filtered.nwk")
-
-    #Output fasta of all ASV's
-    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
     """
 }
 
-/*
- *
- * Step 13: Filter outputs
- *
- */ 
- 
-// TODO: how to output pdf to  figs?
-process output_filtered {
-    tag { "output_filtered" }
-    publishDir "${params.outdir}/results/filtered", mode: "link", overwrite: true
+process make_ps {
+    tag { "make_ps" }
+    publishDir "${params.outdir}/results/unfiltered", mode: "link", overwrite: true
 
     input:
-    file ps from output_to_filter
+    file st from seqtab_to_output
+    file samdf from samdf_to_output
+    file tax from taxtab_to_output
+    file bt from bootstrapFinal
+    file aln from seqsToAln
     
     output:
-    file "ps_filtered.rds" into tax_check_ala,tax_check_afd
-    file "*.csv"
-    file "rarefaction.pdf"
-    file "*.fasta"
-    file "*.nwk"
+    file "ps.rds" into ps_to_filter,ps_to_export
+    
+    when:
+    tree_to_output = false
 
     script:
     """
     #!/usr/bin/env Rscript
     require(phyloseq); packageVersion("phyloseq")
-    require(seqateurs); packageVersion("seqateurs")
+    require(tidyverse); packageVersion("tidyverse")
+    require(ape); packageVersion("ape")
+    
+    # Read in files
+    seqtab <- readRDS("${st}")
+    
+    #Extract start of sample names only
+    rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
+
+    tax <- readRDS("${tax}")
+    colnames(tax) <- stringr::str_to_lower(colnames(tax))
+    seqs <- Biostrings::readDNAStringSet("${aln}")
+
+    samdf <- read.csv("${samdf}", header=TRUE) %>%
+      filter(!duplicated(sample_id)) %>%
+      magrittr::set_rownames(.\$sample_id) 
+    
+    # Create phyloseq object
+    ps <- phyloseq(tax_table(tax), 
+                   sample_data(samdf),
+                   otu_table(seqtab, taxa_are_rows = FALSE),
+                   refseq(seqs))    
+    
+    saveRDS(ps, "ps.rds")
+    """
+}
+
+// TODO: how to output pdf to  figs?
+process filter_ps {
+    tag { "filter_ps" }
+    publishDir "${params.outdir}/results/filtered", mode: "link", overwrite: true
+
+    input:
+    file ps from ps_to_filter
+    
+    output:
+    file "ps_filtered.rds" into tax_check_ala,tax_check_afd,ps_to_export2
+    file "rarefaction.pdf"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    require(phyloseq); packageVersion("phyloseq")
     require(tidyverse); packageVersion("tidyverse")
     require(ape); packageVersion("ape")
     require(vegan); packageVersion("vegan")
@@ -1801,7 +1812,82 @@ process output_filtered {
     ps1 <- ps0 %>%
       phyloseq::prune_samples(sample_sums(.)>=threshold, .) %>% 
       phyloseq::filter_taxa(function(x) mean(x) > 0, TRUE) #Drop missing taxa from table
+     
+    # output filtered phyloseq object
+    saveRDS(ps1, "ps_filtered.rds") 
+    """
+}
 
+process output_unfiltered {
+    tag { "output_unfiltered" }
+    publishDir "${params.outdir}/results/unfiltered", mode: "link", overwrite: true
+
+    input:
+    file ps from ps_to_export
+    
+    output:
+    file "*.csv"
+    file "*.fasta"
+    file "*.nwk"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    require(phyloseq); packageVersion("phyloseq")
+    require(seqateurs); packageVersion("seqateurs")
+    require(tidyverse); packageVersion("tidyverse")
+    require(ape); packageVersion("ape")
+    
+    ps <- readRDS("${ps}")
+    
+    #Export raw csv
+    speedyseq::psmelt(ps) %>%
+      filter(Abundance > 0) %>%
+      dplyr::select(-Sample) %>%
+      write_csv("raw_combined.csv")
+  
+    #Export species level summary
+    seqateurs::summarise_taxa(ps, "species", "sample_id") %>%
+      spread(key="sample_id", value="totalRA") %>%
+      write.csv(file = "spp_sum_unfiltered.csv")
+      
+    #Export genus level summary
+    seqateurs::summarise_taxa(ps, "genus", "sample_id") %>%
+      spread(key="sample_id", value="totalRA") %>%
+      write.csv(file = "gen_sum_unfiltered.csv")
+
+    #Output newick tree
+    write.tree(phy_tree(ps), file="tree_filtered.nwk")
+
+    #Output fasta of all ASV's
+    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
+    """
+}
+
+process output_filtered {
+    tag { "output_filtered" }
+    publishDir "${params.outdir}/results/filtered", mode: "link", overwrite: true
+
+    input:
+    file ps from ps_to_export2
+    
+    output:
+    file "*.csv"
+    file "*.fasta"
+    file "*.nwk"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    require(phyloseq); packageVersion("phyloseq")
+    require(seqateurs); packageVersion("seqateurs")
+    require(tidyverse); packageVersion("tidyverse")
+    require(ape); packageVersion("ape")
+    require(vegan); packageVersion("vegan")
+    
+    # Taxonomic filters
+    ps1 <- readRDS("${ps}")
+    
     # Export summary of filtered results
     seqateurs::summarise_taxa(ps1, "species", "sample_id") %>%
       spread(key="sample_id", value="totalRA") %>%
