@@ -298,72 +298,6 @@ process validate_reads {
 
 /*
  *
- * Step 0b: create samplesheet
- *
- */
-
-process create_samdf {
-    tag { "create_samdf" }
-    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
-
-    input:
-    file(samplesheet) from samplesheet_ch
-    file(runparams) from runparams_ch
-    file(fastq_names) from samples_to_validate.collectFile(name: 'fastq_list.txt', newLine: true)
-    
-    output:
-    file "*.csv" into samdf_to_output
-    
-    script:
-    """
-    #!/usr/bin/env Rscript
-    require(seqateurs)
-    require(tidyverse)
-    SampleSheet <- normalizePath( "${samplesheet}")
-    runParameters <- normalizePath( "${runparams}")
-    
-    print(SampleSheet)
-    print(runParameters)
-
-    # Create samplesheet containing samples and run parameters for all runs
-    samdf <- dplyr::distinct(seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4"))
-
-    # Check if samples match samplesheet
-    fastqFs <- read_delim("fastq_list.txt", delim=" ", col_names=c("sample_id", "fcid", "sample_name", "extraction_rep", "amp_rep")) %>%
-        dplyr::filter(!stringr::str_detect(sample_id, "Undetermined")) %>%
-        dplyr::mutate(sample_id = str_remove(sample_id, pattern = "(?:.(?!_S))+\$"))
-    
-    #Check missing in samplesheet
-    if (length(setdiff(fastqFs\$sample_id, samdf\$sample_id)) > 0) {warning("The fastq file/s: ", setdiff(fastqFs\$sample_id, samdf\$sample_id), " are not in the sample sheet") }
-
-    #Check missing fastqs
-    if (length(setdiff(samdf\$sample_id, fastqFs)) > 0) {
-      samdf <- samdf %>%
-        filter(!sample_id %in% setdiff(samdf\$sample_id, fastqFs\$sample_id))
-    }
-
-    # Add mising fields
-    samdf <- samdf %>%
-      dplyr::mutate(
-      # Add fcid if not prent
-      sample_id = case_when(
-        !stringr::str_detect(sample_id, fcid) ~ paste0(fcid,"_", sample_id),
-        TRUE ~ sample_id
-      ),
-      for_primer_seq = "${params.fwdprimer}",
-      rev_primer_seq = "${params.revprimer}",
-      pcr_primers = paste0("${params.fwdprimer_name}", "-", "${params.revprimer_name}"),
-      sample_name = NA_character_
-      ) %>%
-      seqateurs::coalesce_join(fastqFs, by="sample_id")
-
-    #Write out updated sample CSV for use
-    write_csv(samdf, "Sample_info.csv")
-    """
-}
-
-/*
- *
  * Step 1: Pre-filter Quality control
  *
  */
@@ -569,22 +503,26 @@ process nfilter {
  
 // TODO:Drop single primer and multi primer workflow now that both can work with multicore
 // TODO: Add a ^ to the start of the primers to make it restrict left?
-if (params.lengthvar == false) {
-    process cutadapt {
-        tag { "filt_step2_${fastq_id}" }
+
+process cutadapt {
+    tag { "filt_step2_${fastq_id}" }
+    publishDir "${params.outdir}/qc/test", mode: 'copy', overwrite: true
 
 
-        input:
-        set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
+    input:
+    set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
 
-        file("forwardP.fa") from forprimers
-        file("reverseP.fa") from revprimers
-        
-        output:
-        set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
-        file "*.cutadapt.out" into cutadaptToMultiQC
+    file("forwardP.fa") from forprimers
+    file("reverseP.fa") from revprimers
+    
+    output:
+    set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
+    file "*.cutadapt.out" into cutadaptToMultiQC
+    file(fastq_names) from trimmed_to_validate.collectFile(name: 'demulti_list.txt', newLine: true)
 
-        script:
+
+    script:
+    if (params.lengthvar == false) 
         """
         #!/bin/bash
         cutadapt \\
@@ -599,25 +537,7 @@ if (params.lengthvar == false) {
 
         # Could potentially set a new fastq_id here, then output from env()
         """
-    }
-}
-/* Length variable amplicon filtering - Trim both sides*/
-else if (params.lengthvar == true) {
-    process cutadapt_var {
-        tag { "varfilt_step2_${fastq_id}" }
-
-        input:
-        set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
-        file("forwardP.fa") from forprimers
-        file("reverseP.fa") from revprimers
-        file("forwardP_rc.fa") from rcfor
-        file("reverseP_rc.fa") from rcrev
-        
-        output:
-        set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
-        file "*.cutadapt.out" into cutadaptToMultiQC
-
-        script:
+    else if (params.lengthvar == true)
         """
         #!/bin/bash
         cutadapt \\
@@ -630,16 +550,19 @@ else if (params.lengthvar == true) {
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"       
 
-        # Could potentially set a new fastq_id here?
+        # Could potentially set a new fastq_id here, then output from env() this should split the channel?
+        
+        # Save out new demulti'd names
+        #fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
+        #sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
+        #ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
+        #pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
+        #fi
+        #
+        ## write out info for next step 
+        #echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
         """
-    }    
-} else {
-    // We need to shut this down!
-    cutadaptToMultiQC = Channel.empty()
-    filteredReads = Channel.empty()
-    filteredReadsforQC = Channel.empty()
 }
-
 
 /*
  *
@@ -1361,7 +1284,12 @@ if (params.reference) {
               #TODO add both?
               stop("Only one of param.species, or param.blast_db should be provided")
             } else {
-              tax_final <- tax
+              tax_final <- tax %>%
+                  as_tibble(rownames = "OTU") %>%
+                  dplyr::select(OTU, ranks) %>%
+                  column_to_rownames("OTU") %>%
+                  seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
+                  as.matrix()
             }
 
             # Write to disk
@@ -1614,6 +1542,75 @@ process track_reads {
     """
 }
 
+/*
+ *
+ * Create and check samplesheet
+ *
+ */
+ 
+// TODO: need to have input fastq list from demultiplexed files
+process create_samdf {
+    tag { "create_samdf" }
+    publishDir "${params.outdir}/sample_info", mode: "copy", overwrite: true
+
+    input:
+    file(samplesheet) from samplesheet_ch
+    file(runparams) from runparams_ch
+    file(fastq_names) from samples_to_validate.collectFile(name: 'fastq_list.txt', newLine: true)
+
+    
+    output:
+    file "*.csv" into samdf_to_output
+    
+    script:
+    """
+    #!/usr/bin/env Rscript
+    require(seqateurs)
+    require(tidyverse)
+    SampleSheet <- normalizePath( "${samplesheet}")
+    runParameters <- normalizePath( "${runparams}")
+    
+    print(SampleSheet)
+    print(runParameters)
+
+    # Create samplesheet containing samples and run parameters for all runs
+    samdf <- dplyr::distinct(seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4"))
+
+    # Check if samples match samplesheet
+    fastqFs <- read_delim("fastq_list.txt", delim=" ", col_names=c("sample_id", "fcid", "sample_name", "extraction_rep", "amp_rep")) %>%
+        dplyr::filter(!stringr::str_detect(sample_id, "Undetermined")) %>%
+        dplyr::mutate(sample_id = str_remove(sample_id, pattern = "(?:.(?!_S))+\$"))
+    
+    #Check missing in samplesheet
+    if (length(setdiff(fastqFs\$sample_id, samdf\$sample_id)) > 0) {warning("The fastq file/s: ", setdiff(fastqFs\$sample_id, samdf\$sample_id), " are not in the sample sheet") }
+
+    #Check missing fastqs
+    if (length(setdiff(samdf\$sample_id, fastqFs)) > 0) {
+      samdf <- samdf %>%
+        filter(!sample_id %in% setdiff(samdf\$sample_id, fastqFs\$sample_id))
+    }
+
+    # Add mising fields
+    samdf <- samdf %>%
+      dplyr::mutate(
+      # Add fcid if not prent
+      sample_id = case_when(
+        !stringr::str_detect(sample_id, fcid) ~ paste0(fcid,"_", sample_id),
+        TRUE ~ sample_id
+      ),
+      for_primer_seq = "${params.fwdprimer}",
+      rev_primer_seq = "${params.revprimer}",
+      pcr_primers = paste0("${params.fwdprimer_name}", "-", "${params.revprimer_name}"),
+      sample_name = NA_character_
+      ) %>%
+      seqateurs::coalesce_join(fastqFs, by="sample_id")
+
+    #Write out updated sample CSV for use
+    write_csv(samdf, "Sample_info.csv")
+    """
+}
+ 
+ 
 /*
  *
  * Step 12: Generate outputs
