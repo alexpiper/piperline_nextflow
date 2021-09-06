@@ -1196,7 +1196,7 @@ if (params.reference) {
             }
 
             ids <- IdTaxa(dna, trainingSet,
-                strand="both",
+                strand="top",
                 processors=${task.cpus},
                 verbose=TRUE)
             # ranks of interest

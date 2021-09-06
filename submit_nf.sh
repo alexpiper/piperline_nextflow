@@ -26,7 +26,7 @@ module load Nextflow/20.10.0
 # Run COI data
 
 # Data from /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3
-cp /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3/* /group/pathogens/Alexp/Metabarcoding/test/COI
+cp /group/pathogens/Alexp/Metabarcoding/imappests/data/JDYG3/* /group/pathogens/Alexp/Metabarcoding/piperline_testing/imap_tests/COI
 
 for d in ./*/ ; do
 (cd "$d" && mv *.fastq.gz ../. );
@@ -38,6 +38,8 @@ nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar fal
 --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
 --reference 'idtaxa_bftrimmed.rds' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' \
 -profile basc --subsample 10000 -resume
+
+# -bg runs nextflow in background to ensure conneciton issues dont stop background
 
 
 # Test with multiplexed ITS data
