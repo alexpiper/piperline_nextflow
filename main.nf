@@ -290,7 +290,7 @@ process validate_reads {
         pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
     fi
     
-    # write out info for next step 
+    # write out info for samplesheet creation
     echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
     """
 }
@@ -506,20 +506,19 @@ process nfilter {
 
 process cutadapt {
     tag { "filt_step2_${fastq_id}" }
-    publishDir "${params.outdir}/qc/test", mode: 'copy', overwrite: true
-
+    publishDir "${params.outdir}/qc/test/fastqc", mode: 'copy', overwrite: true
 
     input:
     set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
-
     file("forwardP.fa") from forprimers
     file("reverseP.fa") from revprimers
+    file("forwardP_rc.fa") from rcfor
+    file("reverseP_rc.fa") from rcrev
     
     output:
     set val(fastq_id), val(fcid), val(sampleid), val(ext_id), val(pcr_id), "${fastq_id}*.R[12].cutadapt.fastq.gz" optional true into filt_step3
     file "*.cutadapt.out" into cutadaptToMultiQC
-    file(fastq_names) from trimmed_to_validate.collectFile(name: 'demulti_list.txt', newLine: true)
-
+    file ('*demux.txt') into demux_to_validate
 
     script:
     if (params.lengthvar == false) 
@@ -535,11 +534,11 @@ process cutadapt {
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
             "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"           
 
-        # Could potentially set a new fastq_id here, then output from env()
+        # write out demuxed fastq names for sample sheet
+        echo "\$(ls | grep .fastq.gz)" > "${fastq_id}_demux.txt"
         """
     else if (params.lengthvar == true)
         """
-        #!/bin/bash
         cutadapt \\
             -g file:forwardP.fa -a file:reverseP_rc.fa \\
             -G file:reverseP.fa -a file:forwardP_rc.fa\\
@@ -548,19 +547,10 @@ process cutadapt {
             --no-indels \\
             -o "${fastq_id}.{name}.R1.cutadapt.fastq.gz" \\
             -p "${fastq_id}.{name}.R2.cutadapt.fastq.gz" \\
-            "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"       
-
-        # Could potentially set a new fastq_id here, then output from env() this should split the channel?
-        
-        # Save out new demulti'd names
-        #fcid="\$(echo "${fastq_id}" | cut -d'_' -f\${fcid_pos})"
-        #sampleid="\$(echo "${fastq_id}" | cut -d'_' -f\${sampleid_pos})"
-        #ext_id="\$(echo "${fastq_id}" | cut -d'_' -f\${ext_pos})"
-        #pcr_id="\$(echo "${fastq_id}" | cut -d'_' -f\${pcr_pos})"         
-        #fi
-        #
-        ## write out info for next step 
-        #echo "${fastq_id} \${fcid} \${sampleid} \${ext_id} \${pcr_id}" > "${fastq_id}_fastq_id.txt"
+            "${reads[0]}" "${reads[1]}" > "${fastq_id}.cutadapt.out"
+            
+        # write out demuxed fastq names for sample sheet
+        echo "\$(ls | grep .fastq.gz)" > "${fastq_id}_demux.txt"
         """
 }
 
@@ -1557,7 +1547,7 @@ process create_samdf {
     file(samplesheet) from samplesheet_ch
     file(runparams) from runparams_ch
     file(fastq_names) from samples_to_validate.collectFile(name: 'fastq_list.txt', newLine: true)
-
+    file(fastq_names) from demux_to_validate.collectFile(name: 'demux_list.txt', newLine: true)
     
     output:
     file "*.csv" into samdf_to_output
@@ -1570,9 +1560,6 @@ process create_samdf {
     SampleSheet <- normalizePath( "${samplesheet}")
     runParameters <- normalizePath( "${runparams}")
     
-    print(SampleSheet)
-    print(runParameters)
-
     # Create samplesheet containing samples and run parameters for all runs
     samdf <- dplyr::distinct(seqateurs::create_samplesheet(SampleSheet = SampleSheet, runParameters = runParameters, template = "V4"))
 
@@ -1585,26 +1572,67 @@ process create_samdf {
     if (length(setdiff(fastqFs\$sample_id, samdf\$sample_id)) > 0) {warning("The fastq file/s: ", setdiff(fastqFs\$sample_id, samdf\$sample_id), " are not in the sample sheet") }
 
     #Check missing fastqs
-    if (length(setdiff(samdf\$sample_id, fastqFs)) > 0) {
+    if (length(setdiff(samdf\$sample_id, fastqFs\$sample_id)) > 0) {
       samdf <- samdf %>%
         filter(!sample_id %in% setdiff(samdf\$sample_id, fastqFs\$sample_id))
     }
 
     # Add mising fields
+    primer_names <- purrr::map2(unlist(str_split("${params.fwdprimer_name}", ";")), unlist(str_split("${params.revprimer_name}", ";")), ~{
+            paste0(.x, "-", .y)
+        }) %>%
+        unlist() %>%
+        paste0(collapse=";")
+    
     samdf <- samdf %>%
       dplyr::mutate(
-      # Add fcid if not prent
+      # Add fcid if not present
       sample_id = case_when(
         !stringr::str_detect(sample_id, fcid) ~ paste0(fcid,"_", sample_id),
         TRUE ~ sample_id
       ),
       for_primer_seq = "${params.fwdprimer}",
       rev_primer_seq = "${params.revprimer}",
-      pcr_primers = paste0("${params.fwdprimer_name}", "-", "${params.revprimer_name}"),
+      pcr_primers = primer_names,
       sample_name = NA_character_
       ) %>%
       seqateurs::coalesce_join(fastqFs, by="sample_id")
 
+    #Update the sample sheet and logging sheet to deal with any newly demultiplexed files
+    samdf <- samdf %>%
+     group_by(sample_id) %>%
+     group_split() %>%
+     purrr::map(function(x){
+       if(any(str_detect(x\$pcr_primers, ";"))){
+         primer_names <- unlist(str_split(unique(x\$pcr_primers), ";"))
+         x %>%
+           mutate(count = length(primer_names)) %>% #Replicate the samples
+           uncount(count) %>%
+           mutate(pcr_primers = unlist(str_split(unique(x\$pcr_primers), ";")),
+                  for_primer_seq = unlist(str_split(unique(x\$for_primer_seq), ";")),
+                  rev_primer_seq = unlist(str_split(unique(x\$rev_primer_seq), ";")),
+                  sample_id = paste0(sample_id, "_", pcr_primers)
+                )
+       } else (x)
+     }) %>%
+      bind_rows()
+
+    # Check f these samples are present in the demultiplexed fastq list
+    demux_fastqFs <- readLines("demux_list.txt")  %>%
+        stringr::str_remove(".R[1-2].cutadapt.fastq.gz")%>%
+        stringr::str_replace("_S[0-9].*\\\\.", "_")
+    demux_fastqFs <- demux_fastqFs[!demux_fastqFs == ""]
+    demux_fastqFs <- demux_fastqFs[!stringr::str_detect(demux_fastqFs, "_unknown\$")]
+
+    #Check missing in samplesheet
+    if (length(setdiff(demux_fastqFs, samdf\$sample_id)) > 0) {warning("The fastq file/s: ", setdiff(demux_fastqFs, samdf\$sample_id), " are not in the sample sheet") }
+
+    #Check missing fastqs
+    if (length(setdiff(samdf\$sample_id, demux_fastqFs)) > 0) {
+      samdf <- samdf %>%
+        filter(!sample_id %in% setdiff(samdf\$sample_id, demux_fastqFs))
+    }
+    
     #Write out updated sample CSV for use
     write_csv(samdf, "Sample_info.csv")
     """
@@ -1639,13 +1667,15 @@ process make_phyloseq {
         require(phyloseq); packageVersion("phyloseq")
         require(tidyverse); packageVersion("tidyverse")
         require(ape); packageVersion("ape")
-        
+                
         # Read in files
         seqtab <- readRDS("${st}")
         
         #Extract start of sample names only
-        rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
-
+        rownames(seqtab) <- rownames(seqtab) %>%
+                stringr::str_remove(".R[1-2].*\\\\.fastq.gz") %>%
+                stringr::str_replace("_S[0-9].*\\\\.", "_")
+                
         tax <- readRDS("${tax}")
         colnames(tax) <- stringr::str_to_lower(colnames(tax))
         seqs <- Biostrings::readDNAStringSet("${aln}")
@@ -1660,8 +1690,8 @@ process make_phyloseq {
                        sample_data(samdf),
                        otu_table(seqtab, taxa_are_rows = FALSE),
                        phy_tree(tree),
-                       refseq(seqs))    
-        
+                       refseq(seqs))
+                       
         saveRDS(ps, "ps.rds")
         """
     else
@@ -1675,10 +1705,15 @@ process make_phyloseq {
         seqtab <- readRDS("${st}")
         
         #Extract start of sample names only
-        rownames(seqtab) <- str_replace(rownames(seqtab), pattern="_S[0-9].*\$", replacement="")
-
+        rownames(seqtab) <- rownames(seqtab) %>%
+                stringr::str_remove(".R[1-2].*\\\\.fastq.gz") %>%
+                stringr::str_replace("_S[0-9].*\\\\.", "_")
+                
         tax <- readRDS("${tax}")
         colnames(tax) <- stringr::str_to_lower(colnames(tax))
+        
+        seqs <- Biostrings::DNAStringSet(colnames(seqtab))
+        names(seqs) <- colnames(seqtab)
 
         samdf <- read.csv("${samdf}", header=TRUE) %>%
           filter(!duplicated(sample_id)) %>%
@@ -1687,8 +1722,8 @@ process make_phyloseq {
         # Create phyloseq object
         ps <- phyloseq(tax_table(tax), 
                        sample_data(samdf),
-                       otu_table(seqtab, taxa_are_rows = FALSE)
-                       )    
+                       otu_table(seqtab, taxa_are_rows = FALSE),
+                       refseq(seqs))
         
         saveRDS(ps, "ps.rds")
         """
@@ -1817,25 +1852,29 @@ process output_unfiltered {
     
     #Export raw csv
     speedyseq::psmelt(ps) %>%
-      filter(Abundance > 0) %>%
+      dplyr::filter(Abundance > 0) %>%
       dplyr::select(-Sample) %>%
       write_csv("raw_combined.csv")
   
     #Export species level summary
     seqateurs::summarise_taxa(ps, "species", "sample_id") %>%
-      spread(key="sample_id", value="totalRA") %>%
+      tidyr::spread(key="sample_id", value="totalRA") %>%
       write.csv(file = "spp_sum_unfiltered.csv")
       
     #Export genus level summary
     seqateurs::summarise_taxa(ps, "genus", "sample_id") %>%
-      spread(key="sample_id", value="totalRA") %>%
+      tidyr::spread(key="sample_id", value="totalRA") %>%
       write.csv(file = "gen_sum_unfiltered.csv")
 
     #Output newick tree
-    write.tree(phy_tree(ps), file="tree_filtered.nwk")
+    if(!is.null(phy_tree(ps, errorIfNULL=FALSE))){
+        write.tree(phy_tree(ps), file="tree_filtered.nwk")
+    } else {
+        cat("", file = "tree_filtered.nwk")
+    }
 
     #Output fasta of all ASV's
-    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "Species")
+    seqateurs::ps_to_fasta(ps, out.file = "asvs_unfiltered.fasta", seqnames = "species")
     """
 }
 
@@ -1865,19 +1904,23 @@ process output_filtered {
     
     # Export summary of filtered results
     seqateurs::summarise_taxa(ps1, "species", "sample_id") %>%
-      spread(key="sample_id", value="totalRA") %>%
+      tidyr::spread(key="sample_id", value="totalRA") %>%
       write.csv(file = "spp_sum_filtered.csv")
 
     seqateurs::summarise_taxa(ps1, "genus", "sample_id") %>%
-      spread(key="sample_id", value="totalRA") %>%
+      tidyr::spread(key="sample_id", value="totalRA") %>%
       write.csv(file = "gen_sum_filtered.csv")
 
     #Output fasta of all ASV's
-    seqateurs::ps_to_fasta(ps1, "asvs_filtered.fasta", seqnames="Species")
+    seqateurs::ps_to_fasta(ps1, "asvs_filtered.fasta", seqnames="species")
 
     #Output newick tree
-    write.tree(phy_tree(ps1), file="tree_filtered.nwk")
-
+    if(!is.null(phy_tree(ps1, errorIfNULL=FALSE))){
+        ape::write.tree(phy_tree(ps1), file="tree_filtered.nwk")
+    } else {
+        cat("", file = "tree_filtered.nwk")
+    }
+    
     # output filtered phyloseq object
     saveRDS(ps1, "ps_filtered.rds") 
     """
