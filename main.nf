@@ -562,6 +562,7 @@ process cutadapt {
  
 process filter_and_trim {
     tag { "filt_step3_${fastq_id}" }
+    publishDir "${params.outdir}/qc/test", mode: "copy", overwrite: true
 
     input:
     set fastq_id, fcid, sampleid, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
@@ -672,12 +673,11 @@ process merge_trimmed_table {
     script:
     """
     #!/usr/bin/env Rscript
-    trimmedFiles <- list.files(path = '.', pattern = '*.trimmed.txt')
-    sample.names <- sub('.trimmed.txt', '', trimmedFiles)
-    trimmed <- do.call("rbind", lapply(trimmedFiles, function (x) as.data.frame(read.csv(x))))
-    colnames(trimmed)[1] <- "Sequence"
-    trimmed\$SampleID <- sample.names
-    write.csv(trimmed, "all.trimmed.csv", row.names = FALSE)
+    require(tidyverse); packageVersion("tidyverse")
+    readr::read_csv(list.files(path = '.', pattern = '*.trimmed.txt')) %>%
+        magrittr::set_colnames(c("sample_id", "cutadapt", "filtered", "input", "filterN")) %>%
+        dplyr::mutate(sample_id = sample_id %>% stringr::str_remove(".R[1-2].cutadapt.fastq.gz")) %>%
+        write_csv("all.trimmed.csv")
     """
 }
 
@@ -1480,53 +1480,53 @@ process track_reads {
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
-    file trimmed from trimmed_read_tracking
-    file mergers from merged_read_tracking
-    file dadaFs from dada_for_read_tracking
-    file dadaRs from dada_rev_read_tracking
-    file st from seqtab_read_tracking
+    file(trimmed) from trimmed_read_tracking
+    file(mergers) from merged_read_tracking
+    file(dadaFs) from dada_for_read_tracking
+    file(dadaRs) from dada_rev_read_tracking
+    file(st) from seqtab_read_tracking
 
     output:
-    file "all.readtracking.txt"
+    file "all.readtracking.tsv"
 
     script:
     """
     #!/usr/bin/env Rscript
     require(dada2); packageVersion("dada2")
-    require(dplyr); packageVersion("dplyr")
+    require(tidyverse); packageVersion("tidyverse")
 
     getN <- function(x) sum(getUniques(x))
 
     # the gsub here might be a bit brittle...
     dadaFs <- as.data.frame(sapply(readRDS("${dadaFs}"), getN))
-    rownames(dadaFs) <- gsub('.R1.filtered.fastq.gz', '',rownames(dadaFs))
+    rownames(dadaFs) <- stringr::str_remove(rownames(dadaFs), '.R1.filtered.fastq.gz')
     colnames(dadaFs) <- c("denoisedF")
-    dadaFs\$SampleID <- rownames(dadaFs)
+    dadaFs\$sample_id <- rownames(dadaFs)
 
     dadaRs <- as.data.frame(sapply(readRDS("${dadaRs}"), getN))
-    rownames(dadaRs) <- gsub('.R2.filtered.fastq.gz', '',rownames(dadaRs))
+    rownames(dadaRs) <- stringr::str_remove(rownames(dadaRs), '.R2.filtered.fastq.gz')
     colnames(dadaRs) <- c("denoisedR")
-    dadaRs\$SampleID <- rownames(dadaRs)
+    dadaRs\$sample_id <- rownames(dadaRs)
 
     all.mergers <- readRDS("${mergers}")
-    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% filter(accept)))))
-    rownames(mergers) <- gsub('.R1.filtered.fastq.gz', '',rownames(mergers))
+    mergers <- as.data.frame(sapply(all.mergers, function(x) sum(getUniques(x %>% dplyr::filter(accept)))))
+    rownames(mergers) <- stringr::str_remove(rownames(mergers), '.R1.filtered.fastq.gz')
     colnames(mergers) <- c("merged")
-    mergers\$SampleID <- rownames(mergers)
+    mergers\$sample_id <- rownames(mergers)
 
     seqtab.nochim <- as.data.frame(rowSums(readRDS("${st}")))
-    rownames(seqtab.nochim) <- gsub('.R1.filtered.fastq.gz', '',rownames(seqtab.nochim))
+    rownames(seqtab.nochim) <- stringr::str_remove(rownames(seqtab.nochim), '.R1.filtered.fastq.gz')
     colnames(seqtab.nochim) <- c("seqtab.nochim")
-    seqtab.nochim\$SampleID <- rownames(seqtab.nochim)
+    seqtab.nochim\$sample_id <- rownames(seqtab.nochim)
 
     trimmed <- read.csv("${trimmed}")
 
-    track <- Reduce(function(...) merge(..., by = "SampleID",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
+    track <- Reduce(function(...) merge(..., by = "sample_id",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
     # dropped data in later steps gets converted to NA on the join
     # these are effectively 0
     track[is.na(track)] <- 0
-    
-    write.table(track, "all.readtracking.txt", sep = "\t", row.names = FALSE)
+
+    write_tsv(track, "all.readtracking.tsv")
     """
 }
 
