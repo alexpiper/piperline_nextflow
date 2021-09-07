@@ -73,7 +73,7 @@ def helpMessage() {
       --maxMergedLen                Maximum length of fragment *after* merging                              
 
     Taxonomic arguments (optional):
-      --species_db                     Specify path to fasta file. See dada2 addSpecies() for more detail.  
+      --species_db                   Specify path to fasta file. See dada2 addSpecies() for more detail.  
       --blast_db                     Specify path to fasta file.
       
     Sample and taxon filtering parameters (optional):
@@ -954,7 +954,7 @@ process asv_filter {
     file phmm from phmm_ch.ifEmpty( "" )
 
     output:
-    file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
+    file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_exact,seqtab_to_blast,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
     file "ASV_cleanup_summary.csv" 
     file "seqtab_length_dist.pdf"
     file "sample_cleanup_summary.csv" into asv_read_tracking
@@ -994,7 +994,7 @@ process asv_filter {
         names(seqs) <- getSequences(seqtab_cut)
         
         # Align against phmm if provided    
-            if(file.info("${phmm}")\$size > 0){
+        if(file.info("${phmm}")\$size > 0){
             model <- readRDS("${phmm}")
             phmm_filt <- taxreturn::map_to_model(seqs, model = model, min_score = 100, min_length = 100, shave = FALSE, check_frame = TRUE, kmer_threshold = 0.5, k=5, extra = "fill")
             seqs <- Biostrings::DNAStringSet(names(phmm_filt))
@@ -1125,15 +1125,7 @@ process asv_filter {
 
 if (params.reference) {
     ref_file = file(params.reference)
-    
-    if (params.species_db ){
-      species_file = file(params.species_db)
-    }
-    
-    if (params.blast_db ){
-      blast_file = file(params.blast_db)
-    }
-    
+
     if (params.taxassignment == 'rdp') {
         // TODO: we could combine these into the same script
         
@@ -1147,7 +1139,7 @@ if (params.reference) {
             file spp from species_file
 
             output:
-            file "tax_final.RDS" into taxFinal,taxtab_to_output
+            file "tax_rdp.RDS" into tax_to_combine
             file "bootstrap_final.RDS" into bootstrapFinal
 
             script:
@@ -1165,22 +1157,13 @@ if (params.reference) {
                                     minBoot = ${params.minBoot},
                                     verbose = TRUE)
             boots <- tax\$boot
-               
-            if(as.logical("${params.species_db}")){
-                # Add species using exact matching
-                tax <- addSpecies(tax\$tax, "${sp}",
-                                 tryRC = TRUE,
-                                 verbose = TRUE)
-
-                rownames(tax) <- colnames(seqtab)
-            }
-            
+                         
             # Write original data
-            saveRDS(tax, "tax_final.RDS")
+            saveRDS(tax, "tax_rdp.RDS")
             saveRDS(boots, "bootstrap_final.RDS")
             """
         }
-
+        
     } else if (params.taxassignment == 'idtaxa') {
         process assign_tax_idtaxa {
             tag { "assign_tax_idtaxa" }
@@ -1188,10 +1171,10 @@ if (params.reference) {
 
             input:
             file st from seqtab_to_tax
-            file ref from ref_file // this needs to be a database from the IDTAXA site
+            file ref from ref_file
 
             output:
-            file "tax_final.RDS" into taxFinal,taxtab_to_output
+            file "tax_idtaxa.RDS" into tax_to_combine
             file "bootstrap_final.RDS" into bootstrapFinal
             file "raw_idtaxa.RDS"
 
@@ -1221,6 +1204,7 @@ if (params.reference) {
                 strand="top",
                 processors=${task.cpus},
                 verbose=TRUE)
+                
             # ranks of interest
             ranks <-  c("root", "kingdom", "phylum","class", "order", "family", "genus","species") 
             saveRDS(ids, 'raw_idtaxa.RDS')
@@ -1236,9 +1220,7 @@ if (params.reference) {
               magrittr::set_colnames(ranks) %>%
               as.data.frame() %>%
               magrittr::set_rownames(getSequences(seqtab)) %T>%
-              write.csv("idtaxa_results.csv") %>%  #Write out logfile with confidence levels
-              mutate_all(str_replace,pattern="(?:.(?!_))+\$", replacement="") %>%
-              magrittr::set_rownames(getSequences(seqtab)) 
+              mutate_all(str_replace,pattern="(?:.(?!_))+\$", replacement="")
 
             boots <- t(sapply(ids, function(x) {
                     m <- match(ranks, x\$rank)
@@ -1247,65 +1229,9 @@ if (params.reference) {
             }))
             colnames(boots) <- ranks
             rownames(boots) <- getSequences(seqtab)
-            
-            if(nchar(as.character("${params.species_db}")) > 0 && !nchar(as.character("${params.blast_db}")) > 0){
-               #Further assign to species rank using exact matching
-                exact <- assignSpecies(seqtab, as.character("${params.species_db}"), allowMultiple = TRUE, tryRC = TRUE, verbose = FALSE) %>%
-                    as_tibble(rownames = "OTU") %>%
-                    filter(!is.na(Species)) %>%
-                    dplyr::mutate(binomial = paste0(Genus," ",Species)) %>%
-                     dplyr::rename(exact_genus = Genus, exact_species = Species)
-                
-                #Merge together
-                tax_final <- tax %>%
-                  as_tibble(rownames = "OTU") %>%
-                  left_join(exact, by="OTU") %>%
-                  dplyr::mutate(Species = case_when(
-                    is.na(Species) & Genus == exact_genus ~ binomial,
-                    !is.na(Species) ~ Species
-                  )) %>%
-                dplyr::select(OTU, ranks) %>%
-                  column_to_rownames("OTU") %>%
-                  seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
-                  as.matrix()
-                  
-            } else if(!nchar(as.character("${params.species_db}")) > 0 && nchar(as.character("${params.blast_db}")) > 0){
-                # Add species using BLAST
-                seqs <- taxreturn::char2DNAbin(colnames(seqtab))
-                names(seqs) <- colnames(seqtab) 
-                
-                # TODO: allow editing of these BLAST parameters
-                blast_spp <- blast_assign_species(query=seqs, db=as.character("${params.blast_db}"), identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5, ranks=ranks, delim=";") %>%
-                  dplyr::rename(blast_genus = Genus, blast_spp = Species) %>%
-                  dplyr::filter(!is.na(blast_spp))
-                  
-                #Join together
-                tax_final <- tax %>%
-                  as_tibble(rownames = "OTU") %>%
-                  left_join(blast_spp , by="OTU") %>%
-                  dplyr::mutate(Species = case_when(
-                    is.na(Species) & Genus == blast_genus ~ blast_spp,
-                    !is.na(Species) ~ Species
-                  )) %>%
-                  dplyr::select(OTU, ranks) %>%
-                  column_to_rownames("OTU") %>%
-                  seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
-                  as.matrix()  
-                  
-            } else if(nchar(as.character("${params.species_db}")) > 0 && nchar(as.character("${params.blast_db}")) > 0){
-              #TODO add both?
-              stop("Only one of param.species, or param.blast_db should be provided")
-            } else {
-              tax_final <- tax %>%
-                  as_tibble(rownames = "OTU") %>%
-                  dplyr::select(OTU, ranks) %>%
-                  column_to_rownames("OTU") %>%
-                  seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
-                  as.matrix()
-            }
 
             # Write to disk
-            saveRDS(tax_final, "tax_final.RDS")
+            saveRDS(tax, "tax_idtaxa.RDS")
             saveRDS(boots, "bootstrap_final.RDS")
             """
         }
@@ -1315,9 +1241,144 @@ if (params.reference) {
     } else {
         exit 1, "No taxonomic assignment method set, but reference passed"
     }
+    
+    if (params.species_db ){
+      species_file = file(params.species_db)
+      
+        process assign_tax_exact {
+            tag { "assign_tax_exact" }
+            publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+            
+            input:
+            file st from seqtab_to_exact
+            file ref from species_file
+            
+            output:
+            file "tax_exact.RDS" into exact_to_combine
+            
+            script:
+            """
+            #!/usr/bin/env Rscript
+            require(dada2); packageVersion("dada2")
+            require(tidyverse); packageVersion("tidyverse")
+            
+            seqtab <- readRDS("${st}")
+            
+            # Assign species using exact matching
+            tax_exact <- assignSpecies(seqtab, "${ref}", allowMultiple = TRUE, tryRC = TRUE, verbose = FALSE) %>%
+                as_tibble(rownames = "OTU") %>%
+                filter(!is.na(Species)) %>%
+                dplyr::mutate(binomial = paste0(Genus," ",Species)) %>%
+                 dplyr::rename(exact_genus = Genus, exact_species = Species)
+            
+            # Write to disk
+            saveRDS(tax_exact, "tax_exact.RDS")
+            """
+            
+           }
+    } else {
+        exact_to_combine = Channel.empty()
+    }
+    
+    if (params.blast_db ){
+      blast_file = file(params.blast_db)
+      
+        process assign_tax_blast {
+            tag { "assign_tax_blast" }
+            publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+            
+            input:
+            file st from seqtab_to_blast
+            file ref from blast_file
+            
+            output:
+            file "tax_blast.RDS" into blast_to_combine
+            
+            script:
+            """
+            #!/usr/bin/env Rscript
+            require(dada2); packageVersion("dada2")
+            require(DECIPHER); packageVersion("DECIPHER")
+            require(tidyverse); packageVersion("tidyverse")
+            require(seqateurs); packageVersion("seqateurs")
+            require(taxreturn); packageVersion("taxreturn")
+            
+            seqtab <- readRDS("${st}")
+            
+            # Add species using BLAST
+            seqs <- taxreturn::char2DNAbin(colnames(seqtab))
+            names(seqs) <- colnames(seqtab) 
+            
+            # TODO: allow editing of these BLAST parameters
+            tax_blast <- taxreturn::blast_assign_species(query=seqs, db="${ref}", identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5, ranks=ranks, delim=";") %>%
+              dplyr::rename(blast_genus = Genus, blast_spp = Species) %>%
+              dplyr::filter(!is.na(blast_spp))
+            
+            # Write to disk
+            saveRDS(tax_blast, "tax_blast.RDS")            
+            """
+            
+           }
+    } else {
+        blast_to_combine = Channel.empty()
+    }
+    
+    process combine_tax {
+            tag { "combine_tax" }
+            publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
+
+            input:
+            file(tax) from tax_to_combine
+            file(exact) from exact_to_combine.ifEmpty( "" )
+            file(blast) from blast_to_combine.ifEmpty( "" )
+            
+            output:
+            file "tax_final.RDS" into taxtab_to_output
+
+            script:
+            """
+            #!/usr/bin/env Rscript
+            require(tidyverse); packageVersion("tidyverse")
+            require(seqateurs); packageVersion("seqateurs")
+            
+            tax <- readRDS("${tax}") %>%
+                  as_tibble(rownames = "OTU")
+            
+            #Join tax with blast
+            if(file.info("${blast}")\$size > 0){
+                tax <- tax  %>%
+                  left_join(blast_spp , by="OTU") %>%
+                  dplyr::mutate(Species = case_when(
+                    is.na(Species) & Genus == blast_genus ~ blast_spp,
+                    !is.na(Species) ~ Species
+                  )) 
+            }
+                  
+            #Join tax with exact matching
+            if(file.info("${exact}")\$size > 0){
+                tax <- tax %>%
+                  left_join(exact, by="OTU") %>%
+                  dplyr::mutate(Species = case_when(
+                    is.na(Species) & Genus == exact_genus ~ binomial,
+                    !is.na(Species) ~ Species
+                  )) 
+            }
+            
+            # Make final tax object
+            tax_final <- tax %>%
+                dplyr::select(OTU, ranks) %>%
+                column_to_rownames("OTU") %>%
+                seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
+                as.matrix()
+             
+            # Write to disk
+            saveRDS(tax_final, "tax_final.RDS")
+            stop("Stop here")
+            """
+    }
+     
 } else {
     // set tax channels to 'false', do NOT assign taxonomy
-    taxFinal = Channel.empty()
     taxtab_to_output = Channel.empty()
     bootstrapFinal = Channel.empty()
 }
