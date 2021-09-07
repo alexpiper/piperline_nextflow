@@ -174,6 +174,16 @@ Channel
     .ifEmpty { error "Cannot find any runparameters file matching: ${params.runparams}" }
     .set { runparams_ch }
 
+if(params.phmm != false){
+    Channel
+        .fromPath( params.phmm )
+        //.ifEmpty { "" }
+        .set { phmm_ch }
+}
+else {
+    phmm_ch = Channel.empty()
+}
+
 // Header log info
 log.info "==================================="
 log.info " ${params.base}/piperline  ~  version ${params.version}"
@@ -506,7 +516,6 @@ process nfilter {
 
 process cutadapt {
     tag { "filt_step2_${fastq_id}" }
-    publishDir "${params.outdir}/qc/test/fastqc", mode: 'copy', overwrite: true
 
     input:
     set fastq_id, fcid, sampleid, ext_id, pcr_id, reads from filt_step2
@@ -562,7 +571,6 @@ process cutadapt {
  
 process filter_and_trim {
     tag { "filt_step3_${fastq_id}" }
-    publishDir "${params.outdir}/qc/test", mode: "copy", overwrite: true
 
     input:
     set fastq_id, fcid, sampleid, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
@@ -934,19 +942,27 @@ if (params.pool == "T" || params.pool == 'pseudo') {
  *
  */
 
-if (params.coding == true) {
-    process coding_asv_filter {
-        tag { "coding_asv_filter" }
-        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
 
-        input:
-        file st from seqTable
+process asv_filter {
+    tag { "asv_filter" }
+    publishDir "${params.outdir}/rds", pattern: 'seqtab_final.rds', mode: "copy", overwrite: true
+    publishDir "${params.outdir}/qc", pattern: 'seqtab_length_dist.pdf', mode: "copy", overwrite: true
+    publishDir "${params.outdir}/qc", pattern: 'ASV_cleanup_summary.csv', mode: "copy", overwrite: true
 
-        output:
-        file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
+    input:
+    file st from seqTable
+    file phmm from phmm_ch.ifEmpty( "" )
 
-        script:
-        chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
+    output:
+    file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
+    file "ASV_cleanup_summary.csv" 
+    file "seqtab_length_dist.pdf"
+    file "sample_cleanup_summary.csv" into asv_read_tracking
+
+    script:
+    chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
+    
+    if (params.coding == true) 
         """
         #!/usr/bin/env Rscript
         require(dada2); packageVersion("dada2")        
@@ -978,19 +994,32 @@ if (params.coding == true) {
         names(seqs) <- getSequences(seqtab_cut)
         
         # Align against phmm if provided    
-            if(nchar(as.character("${params.phmm}")) > 0){
-            model <- readRDS("${params.phmm}")
-            seqs <- taxreturn::map_to_model(seqs, model = model, min_score = 100, min_length = 100, shave = FALSE, check_frame = TRUE, kmer_threshold = 0.5, k=5, extra = "fill")
+            if(file.info("${phmm}")\$size > 0){
+            model <- readRDS("${phmm}")
+            phmm_filt <- taxreturn::map_to_model(seqs, model = model, min_score = 100, min_length = 100, shave = FALSE, check_frame = TRUE, kmer_threshold = 0.5, k=5, extra = "fill")
+            seqs <- Biostrings::DNAStringSet(names(phmm_filt))
+            names(seqs) <- names(phmm_filt)
         }
         
-        #Filter sequences containing stop codons
-        
-        codon_filt <- codon_filter(seqs, genetic_code = "${params.genetic_code}") # Internal function
-        seqtab_final <- seqtab_cut[,colnames(seqtab_cut) %in% codon_filt]                
+        #Filter sequences containing stop codons        
+        codon_filt <- seqateurs::codon_filter(seqs, genetic.code = "${params.genetic_code}")
+        seqtab_final <- seqtab_cut[,colnames(seqtab_cut) %in% names(codon_filt)]                
         
         saveRDS(seqtab_final, "seqtab_final.RDS")
         
-        # summarise cleanup
+        # Summarise reads retained per sample
+        asv_read_tracker <- tibble::enframe(rowSums(seqtab_nochim), name="sample_id", value="chimera_filt") %>%
+            left_join(tibble::enframe(rowSums(seqtab_cut), name="sample_id", value="asv_size_filt")) %>%
+            left_join(tibble::enframe(rowSums(seqtab_final), name="sample_id", value="asv_codon_filt"))
+
+        if(file.info("${phmm}")\$size > 0){
+            asv_read_tracker <- asv_read_tracker %>%
+                left_join(tibble::enframe(rowSums(seqtab_cut[,colnames(seqtab_cut) %in% names(seqs)]), name="sample_id", value="asv_phmm_filt")) %>%
+                dplyr::select(sample_id, chimera_filt, asv_size_filt, asv_phmm_filt, asv_codon_filt)
+        }
+        write_csv(asv_read_tracker, "sample_cleanup_summary.csv")
+        
+        # Track fate of ASV's
         cleanup <- st.all %>%
           as.data.frame() %>%
           tidyr::pivot_longer( everything(),
@@ -1020,20 +1049,7 @@ if (params.coding == true) {
           plot(gg.abundance / gg.unique)
         try(dev.off(), silent=TRUE)
         """
-    }
-} else {
-    process noncoding_asv_filter {
-        tag { "noncoding_asv_filter" }
-        publishDir "${params.outdir}/rds", mode: "copy", overwrite: true
-
-        input:
-        file st from seqTable
-
-        output:
-        file "seqtab_final.RDS" into seqtab_to_tax,seqtab_to_rename,seqtab_to_output,seqtab_read_tracking
-
-        script:
-        chimOpts = params.removeBimeraDenovoOptions != false ? ", ${params.removeBimeraDenovoOptions}" : ''
+    else if (params.coding == false) 
         """
         #!/usr/bin/env Rscript
         require(dada2); packageVersion("dada2")        
@@ -1061,9 +1077,15 @@ if (params.coding == true) {
             seqtab_final <- seqtab_nochim
         }       
         
-        saveRDS(seqtab_final, "seqtab_final.RDS")        
+        saveRDS(seqtab_final, "seqtab_final.RDS")       
+
+        # Summarise reads retained per sample
+        asv_read_tracker <- tibble::enframe(rowSums(seqtab_nochim), name="sample_id", value="chimera_filt") %>%
+            left_join(tibble::enframe(rowSums(seqtab_final), name="sample_id", value="asv_size_filt"))
+
+        write_csv(asv_read_tracker, "sample_cleanup_summary.csv")
         
-        # summarise cleanup
+        # Track fate of ASV's
         cleanup <- st.all %>%
           as.data.frame() %>%
           tidyr::pivot_longer( everything(),
@@ -1092,8 +1114,8 @@ if (params.coding == true) {
           plot(gg.abundance / gg.unique)
         try(dev.off(), silent=TRUE)
         """
-    }
 }
+
 
 /*
  *
@@ -1485,6 +1507,7 @@ process track_reads {
     file(dadaFs) from dada_for_read_tracking
     file(dadaRs) from dada_rev_read_tracking
     file(st) from seqtab_read_tracking
+    file(asv) from asv_read_tracking
 
     output:
     file "all.readtracking.tsv"
@@ -1514,14 +1537,12 @@ process track_reads {
     colnames(mergers) <- c("merged")
     mergers\$sample_id <- rownames(mergers)
 
-    seqtab.nochim <- as.data.frame(rowSums(readRDS("${st}")))
-    rownames(seqtab.nochim) <- stringr::str_remove(rownames(seqtab.nochim), '.R1.filtered.fastq.gz')
-    colnames(seqtab.nochim) <- c("seqtab.nochim")
-    seqtab.nochim\$sample_id <- rownames(seqtab.nochim)
-
     trimmed <- read.csv("${trimmed}")
+    
+    asv_cleanup <- read.csv("${asv}") %>%
+        dplyr::mutate(sample_id = stringr::str_remove(sample_id, '.R1.filtered.fastq.gz'))
 
-    track <- Reduce(function(...) merge(..., by = "sample_id",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, seqtab.nochim))
+    track <- Reduce(function(...) merge(..., by = "sample_id",  all.x=TRUE),  list(trimmed, dadaFs, dadaRs, mergers, asv_cleanup))
     # dropped data in later steps gets converted to NA on the join
     # these are effectively 0
     track[is.na(track)] <- 0
