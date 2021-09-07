@@ -1136,7 +1136,6 @@ if (params.reference) {
             input:
             file st from seqtab_to_tax
             file ref from ref_file
-            file spp from species_file
 
             output:
             file "tax_rdp.RDS" into tax_to_combine
@@ -1145,8 +1144,11 @@ if (params.reference) {
             script:
             """
             #!/usr/bin/env Rscript
-            require(dada2); packageVersion("dada2")                
-
+            require(dada2); packageVersion("dada2")             
+            
+            if (!stringr::str_detect("${ref_file}", ".fasta|.fa|.fa.gz|.fasta.gz|.fas")){
+                stop("reference file for RDP must be a fasta file")
+            }
             seqtab <- readRDS("${st}")
 
             # Assign taxonomy
@@ -1198,6 +1200,8 @@ if (params.reference) {
                 load("${ref_file}")
             } else if(stringr::str_detect("${ref_file}", ".rds")){
                 trainingSet <- readRDS("${ref_file}")
+            } else {
+                stop("reference file for IDTAXA must be in .RData or .RDS format")
             }
 
             ids <- IdTaxa(dna, trainingSet,
@@ -1219,7 +1223,7 @@ if (params.reference) {
               stri_list2matrix(byrow=TRUE, fill=NA) %>%
               magrittr::set_colnames(ranks) %>%
               as.data.frame() %>%
-              magrittr::set_rownames(getSequences(seqtab)) %T>%
+              magrittr::set_rownames(getSequences(seqtab)) %>%
               mutate_all(str_replace,pattern="(?:.(?!_))+\$", replacement="")
 
             boots <- t(sapply(ids, function(x) {
@@ -1269,7 +1273,7 @@ if (params.reference) {
                 as_tibble(rownames = "OTU") %>%
                 filter(!is.na(Species)) %>%
                 dplyr::mutate(binomial = paste0(Genus," ",Species)) %>%
-                 dplyr::rename(exact_genus = Genus, exact_species = Species)
+                dplyr::rename(exact_genus = Genus, exact_species = Species)
             
             # Write to disk
             saveRDS(tax_exact, "tax_exact.RDS")
@@ -1310,9 +1314,10 @@ if (params.reference) {
             names(seqs) <- colnames(seqtab) 
             
             # TODO: allow editing of these BLAST parameters
-            tax_blast <- taxreturn::blast_assign_species(query=seqs, db="${ref}", identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5, ranks=ranks, delim=";") %>%
-              dplyr::rename(blast_genus = Genus, blast_spp = Species) %>%
-              dplyr::filter(!is.na(blast_spp))
+            tax_blast <- taxreturn::blast_assign_species(query=seqs, db="${ref}", identity=97, coverage=95, evalue=1e06, max_target_seqs=5, max_hsp=5,
+                ranks=c("Root", "Kingdom", "Phylum","Class", "Order", "Family", "Genus","Species"), delim=";") %>%
+                dplyr::rename(blast_genus = Genus, blast_spp = Species) %>%
+                dplyr::filter(!is.na(blast_spp))
             
             # Write to disk
             saveRDS(tax_blast, "tax_blast.RDS")            
@@ -1346,34 +1351,36 @@ if (params.reference) {
             
             #Join tax with blast
             if(file.info("${blast}")\$size > 0){
+                blast_spp <- readRDS("${blast}")
                 tax <- tax  %>%
                   left_join(blast_spp , by="OTU") %>%
-                  dplyr::mutate(Species = case_when(
-                    is.na(Species) & Genus == blast_genus ~ blast_spp,
-                    !is.na(Species) ~ Species
+                  dplyr::mutate(species = case_when(
+                    is.na(species) & genus == blast_genus ~ blast_spp,
+                    !is.na(species) ~ species
                   )) 
             }
                   
             #Join tax with exact matching
             if(file.info("${exact}")\$size > 0){
+                exact <- readRDS("${exact}")
                 tax <- tax %>%
                   left_join(exact, by="OTU") %>%
-                  dplyr::mutate(Species = case_when(
-                    is.na(Species) & Genus == exact_genus ~ binomial,
-                    !is.na(Species) ~ Species
+                  dplyr::mutate(species = case_when(
+                    is.na(species) & genus == exact_genus ~ binomial,
+                    !is.na(species) ~ species
                   )) 
             }
             
             # Make final tax object
+            ranks <-  c("root", "kingdom", "phylum","class", "order", "family", "genus","species") 
             tax_final <- tax %>%
-                dplyr::select(OTU, ranks) %>%
+                dplyr::select(OTU, all_of(ranks)) %>%
                 column_to_rownames("OTU") %>%
                 seqateurs::na_to_unclassified() %>% #Propagate high order ranks to unassigned ASVs
                 as.matrix()
              
             # Write to disk
             saveRDS(tax_final, "tax_final.RDS")
-            stop("Stop here")
             """
     }
      
