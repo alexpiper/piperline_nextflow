@@ -39,10 +39,14 @@ nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar fal
 --reference 'idtaxa_bftrimmed.rds' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' --phmm 'folmer_fullength_model.rds' --blast_db 'merged_final.fa.gz' --species_db 'merged_arthropoda_rdp_species.fa.gz' \
 -profile basc --subsample 10000 -resume
 
+
+
+
+
 nextflow run alexpiper/piperline --reads '*_R{1,2}_001.fastq.gz' --lengthvar false \
 --fwdprimer 'GGDACWGGWTGAACWGTWTAYCCHCC' --fwdprimer_name 'fwhF2' --revprimer 'GTRATWGCHCCDGCTARWACWGG' --revprimer_name 'fwhR2n' \
 --reference 'merged_final.fa.gz' --samplesheet 'SampleSheet_JDYG3.csv' --runparams 'runParameters.xml' --phmm 'folmer_fullength_model.rds' --blast_db 'merged_final.fa.gz' --species_db 'merged_arthropoda_rdp_species.fa.gz' \
--profile basc --subsample 10000 --taxassignment 'rdp'
+-profile basc --subsample 10000 --taxassignment 'rdp' -resume
 
 
 

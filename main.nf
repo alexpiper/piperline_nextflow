@@ -290,7 +290,7 @@ process validate_reads {
         # if different - exit
         if [ "\${fmt_split}" -ne "\${name_split}" ]; then
             echo 'Number of underscores in filename "${fastq_id}" do not match expected read format: "${params.read_format}"'
-            exit 0
+            exit 1
         fi
         
         # Extract elements
@@ -576,9 +576,9 @@ process filter_and_trim {
     set fastq_id, fcid, sampleid, ext_id, pcr_id, file(reads), file(trimming) from filt_step3.join(filt_step3Trimming)
 
     output:
-    set val(fastq_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads
-    file "*.R1.filtered.fastq.gz" optional true into forReads, forReadsErr
-    file "*.R2.filtered.fastq.gz" optional true into revReads, revReadsErr
+    set val(fastq_id), "*.R1.filtered.fastq.gz", "*.R2.filtered.fastq.gz" optional true into filteredReadsforQC, filteredReads   
+    file("*.filtered.fastq.gz") into filtReadsErr
+    file("*.filtered.fastq.gz") into filtReads
     file "*.trimmed.txt" into trimTracking
 
     script:
@@ -695,17 +695,29 @@ process merge_trimmed_table {
  *
  */
 
+// Make new channels with fcid as key
+filtReadsErrKey = filtReadsErr.collect().flatten().map {
+        file ->
+        def key = file.name.toString().tokenize('_').get(0)
+        return tuple(key, file)
+     }.groupTuple()
+     
+filtReadsKey = filtReads.collect().flatten().map {
+        file ->
+        def key = file.name.toString().tokenize('_').get(0)
+        return tuple(key, file)
+     }.groupTuple()
+     
 process dada2_learn_errors {
     tag { "dada2_learn_errors" }
     publishDir "${params.outdir}/qc", mode: "copy", overwrite: true
 
     input:
-    file fReads from forReadsErr.collect()
-    file rReads from revReadsErr.collect()
+    set key, file(reads) from filtReadsErrKey.view()
 
     output:
-    file "errorsF.RDS" into errorsFor
-    file "errorsR.RDS" into errorsRev
+    file "errorsF_${key}.RDS" into errorsFor
+    file "errorsR_${key}.RDS" into errorsRev
     file "*.pdf"
     
     script:
@@ -715,11 +727,10 @@ process dada2_learn_errors {
     setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
 
     # File parsing
-    filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
-    filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
+    filtFs <- list.files('.', pattern="${key}.*R1.filtered.fastq.gz", full.names = TRUE)
+    filtRs <- list.files('.', pattern="${key}.*R2.filtered.fastq.gz", full.names = TRUE)
     
-    sample.namesF <- sapply(strsplit(basename(filtFs), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
-    sample.namesR <- sapply(strsplit(basename(filtRs), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
+    #TODO Change this to new param: dada2 seed?
     set.seed(100)
 
     # Learn error rates
@@ -745,13 +756,13 @@ process dada2_learn_errors {
         errR\$err_out <- errs
     }
 
-    pdf("err.pdf")
+    pdf("err_${key}.pdf")
     plotErrors(errF, nominalQ=TRUE)
     plotErrors(errR, nominalQ=TRUE)
     dev.off()
 
-    saveRDS(errF, "errorsF.RDS")
-    saveRDS(errR, "errorsR.RDS")
+    saveRDS(errF, "errorsF_${key}.RDS")
+    saveRDS(errR, "errorsR_${key}.RDS")
     """
 }
 
@@ -768,16 +779,15 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         publishDir "${params.outdir}/qc/dada2", mode: "copy", overwrite: true
 
         input:
-        file filtFs from forReads.collect()
-        file filtRs from revReads.collect()
-        file errFor from errorsFor
-        file errRev from errorsRev
+        set key, file(reads) from filtReadsKey.view()
+        file(errFor) from errorsFor
+        file(errRev) from errorsRev
 
         output:
         file "seqtab.RDS" into seqTable,rawSeqTableToRename
-        file "all.mergers.RDS" into merged_read_tracking
-        file "all.dadaFs.RDS" into dada_for_read_tracking
-        file "all.dadaRs.RDS" into dada_rev_read_tracking
+        file "*.mergers.RDS" into merged_read_tracking
+        file "*.dadaFs.RDS" into dada_for_read_tracking
+        file "*.dadaRs.RDS" into dada_rev_read_tracking
         file "seqtab.*"
 
         script:
@@ -786,12 +796,12 @@ if (params.pool == "T" || params.pool == 'pseudo') {
         require(dada2); packageVersion("dada2")
         require(tidyverse); packageVersion("tidyverse")
         setDadaOpt(${params.dadaOpt.collect{k,v->"$k=$v"}.join(", ")})
-        filtFs <- list.files('.', pattern="R1.filtered.fastq.gz", full.names = TRUE)
-        filtRs <- list.files('.', pattern="R2.filtered.fastq.gz", full.names = TRUE)
+        filtFs <- list.files('.', pattern="${key}.*R1.filtered.fastq.gz", full.names = TRUE)
+        filtRs <- list.files('.', pattern="${key}.*R2.filtered.fastq.gz", full.names = TRUE)
 
         errF <- readRDS("${errFor}")
         errR <- readRDS("${errRev}")
-        cat("Processing all samples\n")
+        cat("Processing all samples")
 
         #Variable selection from CLI input flag --pool
         pool <- "${params.pool}"
@@ -811,10 +821,10 @@ if (params.pool == "T" || params.pool == 'pseudo') {
 
         # TODO: make this a single item list with ID as the name, this is lost
         # further on
-        saveRDS(mergers, "all.mergers.RDS")
+        saveRDS(mergers, "${key}.mergers.RDS")
 
-        saveRDS(dadaFs, "all.dadaFs.RDS")
-        saveRDS(dadaRs, "all.dadaRs.RDS")
+        saveRDS(dadaFs, "${key}.dadaFs.RDS")
+        saveRDS(dadaRs, "${key}.dadaRs.RDS")
 
         # go ahead and make seqtable
         seqtab <- makeSequenceTable(mergers)
@@ -827,7 +837,7 @@ if (params.pool == "T" || params.pool == 'pseudo') {
             as.data.frame()
             
         # TODO: change this to flow cell id
-        write.csv(dada_out, "dada_out.csv") 
+        write.csv(dada_out, "dada_${key}.csv") 
         """
         }
 } else {
